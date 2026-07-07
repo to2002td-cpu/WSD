@@ -12,7 +12,7 @@ set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")/.."
 
 QUEUE="${OAR_QUEUE:-production}"
-RESOURCES="${OAR_RESOURCES:-{ressources.gpu_mem>20000}host=1/gpu=1,walltime=24:00:00}"
+RESOURCES="${OAR_RESOURCES:-host=1/gpu=1,walltime=24:00:00}"
 PROPERTY="${OAR_PROPERTY:-}"
 
 mkdir -p oar_logs
@@ -21,7 +21,7 @@ chmod +x scripts/oar_job.sh
 args=(
   -n wsd-probe
   -q "$QUEUE"
-  -l "$RESOURCES"
+  -l {ressources.gpu_mem>20000}host=1/gpu=1,walltime=24:00:00}
   -O "oar_logs/wsd-probe.%jobid%.out"
   -E "oar_logs/wsd-probe.%jobid%.err"
 )
