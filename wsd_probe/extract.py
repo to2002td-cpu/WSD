@@ -32,8 +32,7 @@ log = logging.getLogger(__name__)
 # Pythia released checkpoints: step0, powers of two up to 512, then every
 # 1000 steps up to 143000. Log-spaced default so early training is covered.
 DEFAULT_STEPS = [
-    0, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512,
-    1000, 2000, 4000, 8000, 16000, 32000, 64000, 128000, 143000,
+    1000, 16000, 32000, 64000, 128000, 143000,
 ]
 
 
