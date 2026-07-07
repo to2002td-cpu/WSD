@@ -21,7 +21,7 @@ chmod +x scripts/oar_job.sh
 args=(
   -n wsd-probe
   -q "$QUEUE"
-  -l {ressources.gpu_mem>20000}host=1/gpu=1,walltime=24:00:00}
+  -l "{ressources.gpu_mem>20000}host=1/gpu=1,walltime=24:00:00}"
   -O "oar_logs/wsd-probe.%jobid%.out"
   -E "oar_logs/wsd-probe.%jobid%.err"
 )
