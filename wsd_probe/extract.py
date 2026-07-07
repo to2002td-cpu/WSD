@@ -95,7 +95,7 @@ def extract_checkpoint(
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         revision=revision,
-        torch_dtype=_model_dtype(device),
+        dtype=_model_dtype(device),
         cache_dir=cache_dir,
     )
     model.to(device)
