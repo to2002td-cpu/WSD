@@ -34,7 +34,12 @@ def _pairwise_cosine_dist(x: np.ndarray) -> np.ndarray:
     x = x.astype(np.float32)
     norms = np.linalg.norm(x, axis=1, keepdims=True)
     x = x / np.maximum(norms, 1e-8)
-    return 1.0 - x @ x.T
+    dist = 1.0 - x @ x.T
+    # Clean up float error so sklearn accepts it as a precomputed distance
+    # matrix: non-negative, exactly zero diagonal.
+    np.clip(dist, 0.0, None, out=dist)
+    np.fill_diagonal(dist, 0.0)
+    return dist
 
 
 def _mean_intra_inter(
