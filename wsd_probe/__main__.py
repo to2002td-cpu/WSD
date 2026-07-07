@@ -32,7 +32,7 @@ DEFAULT_MODEL = "EleutherAI/pythia-6.9b"
 
 def _add_data_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
-    p.add_argument("--min-examples-per-sense", type=int, default=0)
+    p.add_argument("--min-examples-per-sense", type=int, default=2)
     p.add_argument("--max-examples-per-sense", type=int, default=9999)
     p.add_argument("--max-words", type=int, default=9999)
     p.add_argument("--min-sent-tokens", type=int, default=0)
