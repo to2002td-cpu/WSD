@@ -32,12 +32,12 @@ DEFAULT_MODEL = "EleutherAI/pythia-6.9b"
 
 def _add_data_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
-    p.add_argument("--min-examples-per-sense", type=int, default=10)
-    p.add_argument("--max-examples-per-sense", type=int, default=40)
-    p.add_argument("--max-words", type=int, default=30)
-    p.add_argument("--min-sent-tokens", type=int, default=5)
-    p.add_argument("--max-sent-tokens", type=int, default=80)
-    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--min-examples-per-sense", type=int, default=0)
+    p.add_argument("--max-examples-per-sense", type=int, default=9999)
+    p.add_argument("--max-words", type=int, default=9999)
+    p.add_argument("--min-sent-tokens", type=int, default=0)
+    p.add_argument("--max-sent-tokens", type=int, default=9999)
+    p.add_argument("--seed", type=int, default=42)
 
 
 def _add_extract_args(p: argparse.ArgumentParser) -> None:
@@ -47,8 +47,8 @@ def _add_extract_args(p: argparse.ArgumentParser) -> None:
         default=",".join(str(s) for s in extract.DEFAULT_STEPS),
         help="Comma-separated pre-training steps (Pythia revisions)",
     )
-    p.add_argument("--batch-size", type=int, default=16)
-    p.add_argument("--max-length", type=int, default=128)
+    p.add_argument("--batch-size", type=int, default=32)
+    p.add_argument("--max-length", type=int, default=512)
     p.add_argument("--device", default=None, help="cuda | mps | cpu (auto)")
     p.add_argument("--emb-dir", type=Path, default=DEFAULT_EMB_DIR)
     p.add_argument("--cache-dir", default=None, help="HF cache directory")
