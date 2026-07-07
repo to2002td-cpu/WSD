@@ -34,7 +34,12 @@ log = logging.getLogger(__name__)
 DEFAULT_STEPS = [
     1000, 16000, 32000, 64000, 128000, 143000,
 ]
-
+TARGET_LAYERS = [
+    8,
+    16,
+    24,
+    32,
+]
 
 def pick_device(requested: str | None = None) -> torch.device:
     if requested:
@@ -100,9 +105,19 @@ def extract_checkpoint(
     model.to(device)
     model.eval()
 
-    n_layers = model.config.num_hidden_layers + 1  # + embedding layer
     hidden = model.config.hidden_size
-    vectors = np.zeros((len(records), n_layers, hidden), dtype=np.float16)
+    
+    max_layer = model.config.num_hidden_layers
+    for layer in TARGET_LAYERS:
+        if not (1 <= layer <= max_layer):
+            raise ValueError(
+                f"Requested layer {layer}, but model only has layers 1..{max_layer}"
+            )
+    
+    vectors = np.zeros(
+        (len(records), len(TARGET_LAYERS), hidden),
+        dtype=np.float16,
+    )
 
     n_truncated = 0
     batch_starts = range(0, len(records), batch_size)
@@ -127,8 +142,9 @@ def extract_checkpoint(
         enc = {k: v.to(device) for k, v in enc.items()}
         out = model(**enc, output_hidden_states=True)
         # [n_layers, B, T, H] -> pooled per instance
-        hs = torch.stack(out.hidden_states).float()
-
+        hs = torch.stack(
+            [out.hidden_states[layer] for layer in TARGET_LAYERS]
+        ).float()
         for j, rec in enumerate(batch):
             idx = _target_token_indices(
                 offset_mapping[j].tolist(), rec["target_start"], rec["target_end"]
