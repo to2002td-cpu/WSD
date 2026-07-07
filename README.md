@@ -76,6 +76,20 @@ Useful flags:
 Reproducibility: every sampling step is seeded (`--seed`, default 0); each
 stage is idempotent and resumable.
 
+## Grid'5000 (OAR)
+
+```bash
+./scripts/submit_oar.sh                 # 1 GPU, 24h, production queue
+OAR_RESOURCES="host=1/gpu=1,walltime=48:00:00" \
+OAR_PROPERTY="gpu_model LIKE 'A100%'" ./scripts/submit_oar.sh --batch-size 16
+```
+
+The node payload (`scripts/oar_job.sh`) installs uv if needed, puts the HF
+cache on node-local `/tmp`, and runs `wsd_probe all` with `--purge-cache` so
+disk usage stays bounded to one ~14 GB checkpoint at a time. Logs (with
+progress bars) land in `oar_logs/`. Extraction is resumable: if the job hits
+walltime, resubmit and already-extracted checkpoints are skipped.
+
 ## Compute notes
 
 - 6.9B in fp16 needs ~16 GB of GPU memory at batch 8, seq 128.

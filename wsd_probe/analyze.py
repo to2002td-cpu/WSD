@@ -136,8 +136,12 @@ def analyze_all(
         raise FileNotFoundError(f"No step*.npz found in {embeddings_dir}")
     log.info("Analyzing %d checkpoints from %s", len(npz_files), embeddings_dir)
 
+    from tqdm import tqdm
+
     all_rows = []
-    for npz_path in npz_files:
+    for npz_path in tqdm(
+        npz_files, desc="checkpoints", unit="ckpt", dynamic_ncols=True
+    ):
         step = int(npz_path.stem.removeprefix("step"))
         vectors = np.load(npz_path)["vectors"]
         # Rows lost to truncation were left as zeros -> drop them.
@@ -146,7 +150,12 @@ def analyze_all(
         ) > 0
         rng = np.random.default_rng(seed)
 
-        for (word, pos), group in meta.groupby(["word", "pos"]):
+        word_groups = meta.groupby(["word", "pos"])
+        words_bar = tqdm(
+            word_groups, desc=f"  step{step} words", unit="word",
+            leave=False, dynamic_ncols=True,
+        )
+        for (word, pos), group in words_bar:
             rows_idx = group["row"].to_numpy()
             ok = valid[rows_idx]
             g = group[ok]

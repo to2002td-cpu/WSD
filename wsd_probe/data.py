@@ -70,8 +70,12 @@ def _iter_semcor_instances(
     from nltk.corpus.reader.wordnet import Lemma
     from nltk.tree import Tree
 
+    from tqdm import tqdm
+
     instances: list[Instance] = []
-    for sent_id, sent in enumerate(semcor.tagged_sents(tag="sem")):
+    sents = semcor.tagged_sents(tag="sem")
+    progress = tqdm(sents, desc="Scanning SemCor", unit="sent", dynamic_ncols=True)
+    for sent_id, sent in enumerate(progress):
         # Each chunk is either a plain list of tokens (unannotated) or a Tree
         # whose label is a wordnet Lemma (annotated) or a string (named
         # entities etc., which we ignore as targets).
@@ -176,7 +180,7 @@ def build_dataset(
 
     records: list[dict] = []
     for _, _, word, pos, strong in kept:
-        for sense, insts in sorted(strong.items()):
+        for _, insts in sorted(strong.items()):
             if len(insts) > max_examples_per_sense:
                 insts = rng.sample(insts, max_examples_per_sense)
             records.extend(asdict(i) for i in insts)

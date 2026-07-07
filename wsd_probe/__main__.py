@@ -52,6 +52,12 @@ def _add_extract_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--device", default=None, help="cuda | mps | cpu (auto)")
     p.add_argument("--emb-dir", type=Path, default=DEFAULT_EMB_DIR)
     p.add_argument("--cache-dir", default=None, help="HF cache directory")
+    p.add_argument(
+        "--purge-cache",
+        action="store_true",
+        help="Delete downloaded model weights after each checkpoint "
+        "(each pythia-6.9b revision is ~14 GB)",
+    )
 
 
 def _add_analyze_args(p: argparse.ArgumentParser) -> None:
@@ -90,6 +96,7 @@ def run_extract(args, records) -> Path:
         max_length=args.max_length,
         device=extract.pick_device(args.device),
         cache_dir=args.cache_dir,
+        purge_cache=args.purge_cache,
     )
     return args.emb_dir / args.model.split("/")[-1]
 

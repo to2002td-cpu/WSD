@@ -106,9 +106,15 @@ def extract_checkpoint(
     vectors = np.zeros((len(records), n_layers, hidden), dtype=np.float16)
 
     n_truncated = 0
-    for b0 in tqdm(
-        range(0, len(records), batch_size), desc=revision, unit="batch"
-    ):
+    batch_starts = range(0, len(records), batch_size)
+    progress = tqdm(
+        batch_starts,
+        desc=f"  {revision} embeddings",
+        unit="batch",
+        leave=False,
+        dynamic_ncols=True,
+    )
+    for b0 in progress:
         batch = records[b0 : b0 + batch_size]
         enc = tokenizer(
             [r["sentence"] for r in batch],
@@ -152,16 +158,42 @@ def extract_checkpoint(
     return out_path
 
 
+def _purge_model_cache(model_name: str, cache_dir: str | None) -> None:
+    """Delete the HF cache entry of the model (all downloaded revisions).
+
+    Each Pythia-6.9b revision is a full ~14 GB snapshot; over 20 checkpoints
+    that would need ~280 GB of cache, so on clusters we drop the weights as
+    soon as their .npz is extracted.
+    """
+    import shutil
+
+    from huggingface_hub.constants import HF_HUB_CACHE
+
+    target = Path(cache_dir or HF_HUB_CACHE) / (
+        "models--" + model_name.replace("/", "--")
+    )
+    if target.exists():
+        shutil.rmtree(target)
+        log.info("Purged HF cache %s", target)
+
+
 def extract_all(
     model_name: str,
     steps: "list[int]",
     records: "list[dict]",
     out_dir: Path,
+    purge_cache: bool = False,
     **kwargs,
 ) -> "list[Path]":
     paths = []
-    for step in steps:
+    checkpoints_bar = tqdm(
+        steps, desc="checkpoints", unit="ckpt", dynamic_ncols=True
+    )
+    for step in checkpoints_bar:
+        checkpoints_bar.set_postfix_str(f"step{step}")
         paths.append(
             extract_checkpoint(model_name, step, records, out_dir, **kwargs)
         )
+        if purge_cache:
+            _purge_model_cache(model_name, kwargs.get("cache_dir"))
     return paths
