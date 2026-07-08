@@ -197,15 +197,15 @@ def make_all_plots(df: pd.DataFrame, summary: pd.DataFrame, out_dir: Path) -> No
         out_dir / "ratio_vs_step.png",
     )
     plot_metric_vs_step(
-        summary, "frac_significant", "Fraction of words with p < 0.05",
-        out_dir / "significance_vs_step.png",
+        summary, "centroid_dist_mean", "Mean centroid cosine distance",
+        out_dir / "centroid_dist_vs_step.png",
     )
     plot_layer_step_heatmap(
         summary, "silhouette_mean", "Mean silhouette",
         out_dir / "heatmap_silhouette.png",
     )
     plot_layer_step_heatmap(
-        summary, "frac_significant", "Fraction significant (p < 0.05)",
-        out_dir / "heatmap_significance.png",
+        summary, "centroid_dist_mean", "Mean centroid distance",
+        out_dir / "heatmap_centroid_dist.png",
     )
     plot_per_word(df, out_dir / "per_word_trajectories.png")

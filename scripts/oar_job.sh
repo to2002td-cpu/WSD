@@ -27,5 +27,4 @@ uv sync
 exec uv run python -m wsd_probe all \
   --model EleutherAI/pythia-6.9b \
   --purge-cache \
-  --n-permutations 1000 \
   "$@"

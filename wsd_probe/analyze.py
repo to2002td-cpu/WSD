@@ -1,25 +1,37 @@
 """Measure sense separation in the extracted representations.
 
-For every (word, layer, checkpoint) we compare cosine distances between
-representations of the target word grouped by annotated sense:
+Centroid-based analysis (no pairwise n x n matrices). For every
+(word, layer, checkpoint) we summarize each annotated sense by its centroid
+(the mean representation of its instances) and measure separation relative to
+within-sense spread:
 
-  * intra: mean pairwise cosine distance between instances of the SAME sense
-  * inter: mean pairwise cosine distance between instances of DIFFERENT senses
-  * ratio = inter / intra  (> 1 means senses are farther apart than chance
-    variation within a sense; internally normalized, hence comparable across
-    checkpoints despite drifting representation geometry/anisotropy)
+  * intra: mean cosine distance from each instance to its OWN sense centroid
+    (within-sense scatter / compactness)
+  * inter: mean cosine distance from each instance to the OTHER senses'
+    centroids
+  * ratio = inter / intra  (> 1 means senses sit farther apart than the spread
+    within a sense; internally normalized, hence comparable across checkpoints
+    despite drifting representation geometry/anisotropy)
   * centroid_dist: mean cosine distance between sense centroids
-  * silhouette: silhouette score of the sense labeling (cosine metric)
-  * p_perm: permutation test p-value for the statistic (inter - intra); sense
-    labels are shuffled `n_permutations` times, so significance is evaluated
-    without any distributional assumption.
+  * silhouette: nearest-centroid silhouette, mean over instances of
+    (b - a) / max(a, b) where a = distance to own centroid and b = distance to
+    the nearest other centroid (in [-1, 1]; higher = better separated)
+
+The own-sense (intra / a) distances use a LEAVE-ONE-OUT centroid: each
+instance is compared to the mean of the *other* instances of its sense, never
+to a centroid it helped define. Without this, an instance is trivially close
+to its own centroid and even random data would look separated (ratio > 1,
+silhouette > 0) when senses have few instances. Distances to other senses'
+centroids need no correction (the instance never contributed to them).
+
+All statistics are O(n_instances x n_senses), i.e. linear in the number of
+instances, so no full pairwise distance matrix is ever built.
 
 Results are written as one tidy CSV, one row per (word, layer, step).
 """
 
 from __future__ import annotations
 
-import itertools
 import logging
 from pathlib import Path
 
@@ -29,80 +41,63 @@ import pandas as pd
 log = logging.getLogger(__name__)
 
 
-def _pairwise_cosine_dist(x: np.ndarray) -> np.ndarray:
-    """Full [n, n] cosine distance matrix (float32)."""
-    x = x.astype(np.float32)
-    norms = np.linalg.norm(x, axis=1, keepdims=True)
-    x = x / np.maximum(norms, 1e-8)
-    dist = 1.0 - x @ x.T
-    # Clean up float error so sklearn accepts it as a precomputed distance
-    # matrix: non-negative, exactly zero diagonal.
-    np.clip(dist, 0.0, None, out=dist)
-    np.fill_diagonal(dist, 0.0)
-    return dist
-
-
-def _mean_intra_inter(
-    dist: np.ndarray, labels: np.ndarray
-) -> "tuple[float, float]":
-    same = labels[:, None] == labels[None, :]
-    triu = np.triu(np.ones_like(same, dtype=bool), k=1)
-    intra = dist[same & triu]
-    inter = dist[~same & triu]
-    return float(intra.mean()), float(inter.mean())
-
-
-def _permutation_pvalue(
-    dist: np.ndarray,
-    labels: np.ndarray,
-    observed: float,
-    n_permutations: int,
-    rng: np.random.Generator,
-) -> float:
-    """P(inter - intra >= observed) under random relabeling of instances."""
-    count = 0
-    perm = labels.copy()
-    for _ in range(n_permutations):
-        rng.shuffle(perm)
-        intra, inter = _mean_intra_inter(dist, perm)
-        if inter - intra >= observed:
-            count += 1
-    return (count + 1) / (n_permutations + 1)
+def _unit(x: np.ndarray) -> np.ndarray:
+    """Row-normalize to unit L2 norm (safe against zero rows)."""
+    return x / np.maximum(np.linalg.norm(x, axis=1, keepdims=True), 1e-8)
 
 
 def analyze_word(
     vectors: np.ndarray,  # [n_instances, n_layers, hidden]
     senses: np.ndarray,   # [n_instances] sense labels
-    n_permutations: int,
-    rng: np.random.Generator,
 ) -> "list[dict]":
-    """Per-layer separation metrics for one word at one checkpoint."""
-    from sklearn.metrics import silhouette_score
-
+    """Per-layer, centroid-based separation metrics for one word/checkpoint."""
     _, sense_ids = np.unique(senses, return_inverse=True)
+    n_instances = len(sense_ids)
+    n_senses = int(sense_ids.max()) + 1
+    inst_idx = np.arange(n_instances)
+    counts = np.bincount(sense_ids, minlength=n_senses).astype(np.float32)
     n_layers = vectors.shape[1]
+
     rows = []
     for layer in range(n_layers):
-        x = vectors[:, layer, :]
-        dist = _pairwise_cosine_dist(x)
-        intra, inter = _mean_intra_inter(dist, sense_ids)
-        observed = inter - intra
+        u = _unit(vectors[:, layer, :].astype(np.float32))  # [n, d] unit vecs
 
-        centroids = np.stack(
-            [x[sense_ids == s].mean(axis=0) for s in np.unique(sense_ids)]
+        # Per-sense sum and spherical centroid (mean of unit vectors,
+        # re-normalized to a direction so cosine distance is well defined).
+        sums = np.zeros((n_senses, u.shape[1]), dtype=np.float32)
+        np.add.at(sums, sense_ids, u)
+        cu = _unit(sums)                                     # [g, d] unit
+
+        # Distance of every instance to every sense centroid: [n, g]. These
+        # centroids include the instance for its own sense, so the own-sense
+        # column is replaced below by a leave-one-out distance.
+        dist_to = 1.0 - u @ cu.T
+
+        # Leave-one-out own-sense centroid: (sum_of_sense - u_i)/(count-1).
+        own_counts = counts[sense_ids][:, None]
+        loo = (sums[sense_ids] - u) / np.maximum(own_counts - 1.0, 1.0)
+        loo = _unit(loo)
+        own = 1.0 - np.einsum("nd,nd->n", u, loo)            # [n] LOO distance
+
+        intra = float(own.mean())
+        # Mean distance to the (g-1) other (un-corrected) centroids.
+        others_sum = dist_to.sum(axis=1) - dist_to[inst_idx, sense_ids]
+        inter = float((others_sum / (n_senses - 1)).mean())
+
+        # Nearest-centroid silhouette: a = LOO own distance, b = nearest other.
+        other = dist_to.copy()
+        other[inst_idx, sense_ids] = np.inf
+        nearest_other = other.min(axis=1)                    # [n] = b
+        sil = float(
+            ((nearest_other - own)
+             / np.maximum(np.maximum(own, nearest_other), 1e-12)).mean()
         )
-        cdist = _pairwise_cosine_dist(centroids)
-        centroid_dist = float(
-            np.mean([cdist[i, j] for i, j in
-                     itertools.combinations(range(len(centroids)), 2)])
-        )
 
-        try:
-            sil = float(silhouette_score(dist, sense_ids, metric="precomputed"))
-        except ValueError:
-            sil = float("nan")
+        # Mean pairwise cosine distance between the g sense centroids.
+        cc = 1.0 - cu @ cu.T
+        iu, ju = np.triu_indices(n_senses, k=1)
+        centroid_dist = float(cc[iu, ju].mean())
 
-        p = _permutation_pvalue(dist, sense_ids, observed, n_permutations, rng)
         rows.append(
             dict(
                 layer=layer,
@@ -111,7 +106,6 @@ def analyze_word(
                 ratio=inter / intra if intra > 0 else float("nan"),
                 centroid_dist=centroid_dist,
                 silhouette=sil,
-                p_perm=p,
             )
         )
     return rows
@@ -121,8 +115,6 @@ def analyze_all(
     records: "list[dict]",
     embeddings_dir: Path,
     out_csv: Path,
-    n_permutations: int = 1000,
-    seed: int = 0,
 ) -> pd.DataFrame:
     """Run the analysis for every word x layer x checkpoint found on disk."""
     meta = pd.DataFrame(records)
@@ -148,7 +140,6 @@ def analyze_all(
         valid = np.linalg.norm(
             vectors[:, -1, :].astype(np.float32), axis=1
         ) > 0
-        rng = np.random.default_rng(seed)
 
         word_groups = meta.groupby(["word", "pos"])
         words_bar = tqdm(
@@ -169,7 +160,7 @@ def analyze_all(
 
             word_vecs = vectors[g["row"].to_numpy()]
             senses = g["sense"].to_numpy()
-            for row in analyze_word(word_vecs, senses, n_permutations, rng):
+            for row in analyze_word(word_vecs, senses):
                 row.update(
                     word=word,
                     pos=pos,
@@ -187,16 +178,14 @@ def analyze_all(
     return df
 
 
-def summarize(df: pd.DataFrame, alpha: float = 0.05) -> pd.DataFrame:
-    """Aggregate over words: mean separation and share of significant words
-    per (step, layer)."""
+def summarize(df: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate over words: mean separation per (step, layer)."""
     agg = (
         df.groupby(["step", "layer"])
         .agg(
             ratio_mean=("ratio", "mean"),
             silhouette_mean=("silhouette", "mean"),
             centroid_dist_mean=("centroid_dist", "mean"),
-            frac_significant=("p_perm", lambda p: float((p < alpha).mean())),
             n_words=("word", "nunique"),
         )
         .reset_index()

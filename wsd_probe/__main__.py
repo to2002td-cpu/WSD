@@ -2,7 +2,7 @@
 
     python -m wsd_probe data     [--min-examples-per-sense N] [--max-words K] ...
     python -m wsd_probe extract  [--model M] [--steps s1,s2,...] ...
-    python -m wsd_probe analyze  [--n-permutations N]
+    python -m wsd_probe analyze
     python -m wsd_probe plot
     python -m wsd_probe all      (runs the four stages in order)
 
@@ -61,7 +61,6 @@ def _add_extract_args(p: argparse.ArgumentParser) -> None:
 
 
 def _add_analyze_args(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--n-permutations", type=int, default=1000)
     p.add_argument("--analysis-csv", type=Path, default=DEFAULT_ANALYSIS)
     p.add_argument("--summary-csv", type=Path, default=DEFAULT_SUMMARY)
 
@@ -102,10 +101,7 @@ def run_extract(args, records) -> Path:
 
 
 def run_analyze(args, records, emb_dir: Path):
-    df = analyze.analyze_all(
-        records, emb_dir, args.analysis_csv,
-        n_permutations=args.n_permutations, seed=args.seed,
-    )
+    df = analyze.analyze_all(records, emb_dir, args.analysis_csv)
     summary = analyze.summarize(df)
     summary.to_csv(args.summary_csv, index=False)
     log.info("Wrote %s", args.summary_csv)
@@ -126,7 +122,7 @@ def main() -> None:
     _add_data_args(p)
     _add_extract_args(p)
 
-    p = sub.add_parser("analyze", help="compute separation metrics + stats")
+    p = sub.add_parser("analyze", help="compute centroid separation metrics")
     _add_data_args(p)
     _add_extract_args(p)
     _add_analyze_args(p)
