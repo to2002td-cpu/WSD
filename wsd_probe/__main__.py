@@ -63,6 +63,11 @@ def _add_extract_args(p: argparse.ArgumentParser) -> None:
 def _add_analyze_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--analysis-csv", type=Path, default=DEFAULT_ANALYSIS)
     p.add_argument("--summary-csv", type=Path, default=DEFAULT_SUMMARY)
+    p.add_argument(
+        "--workers", type=int, default=0,
+        help="Parallel worker processes over checkpoints (0 = auto = "
+        "min(#checkpoints, #cpus); 1 = serial)",
+    )
 
 
 def _add_plot_args(p: argparse.ArgumentParser) -> None:
@@ -101,7 +106,9 @@ def run_extract(args, records) -> Path:
 
 
 def run_analyze(args, records, emb_dir: Path):
-    df = analyze.analyze_all(records, emb_dir, args.analysis_csv)
+    df = analyze.analyze_all(
+        records, emb_dir, args.analysis_csv, workers=args.workers
+    )
     summary = analyze.summarize(df)
     summary.to_csv(args.summary_csv, index=False)
     log.info("Wrote %s", args.summary_csv)
@@ -162,7 +169,7 @@ def main() -> None:
         summary = pd.read_csv(args.summary_csv)
 
     if args.cmd in ("plot", "all"):
-        plots.make_all_plots(df, summary, args.fig_dir)
+        plots.make_all_plots(df, summary, args.fig_dir, records, emb_dir)
 
 
 if __name__ == "__main__":

@@ -24,7 +24,10 @@ fi
 
 uv sync
 
+# --workers 0 lets the analyze stage use one process per checkpoint
+# (min(#checkpoints, #cpus)); extraction is unaffected (single GPU).
 exec uv run python -m wsd_probe all \
   --model EleutherAI/pythia-6.9b \
   --purge-cache \
+  --workers 0 \
   "$@"

@@ -41,9 +41,10 @@ corresponding to different senses?
    [What exactly is computed](#what-exactly-is-computed) below. Output: tidy
    `results/analysis.csv` (one row per cell) + aggregate `results/summary.csv`.
 
-4. **Figures** (`wsd_probe/plots.py`) — separation vs checkpoint per layer,
-   layer × checkpoint heatmaps, per-word trajectories (word and layer selected
-   from the data, not a priori).
+4. **Figures** (`wsd_probe/plots.py`) — the headline `cloud_split.png` (2-D PCA
+   scatter per word × checkpoint: watch one blob split into two clouds), plus
+   mean-silhouette-vs-step, fraction-of-words-separated-vs-step, and a
+   layer × checkpoint silhouette heatmap.
 
 ## What exactly is computed
 
@@ -142,10 +143,16 @@ answer to "are the senses actually separable?", complementary to the ratio.
 This is a centroid (nearest-prototype) silhouette, *not* the full pairwise
 silhouette — chosen precisely to avoid the `n × n` matrix.
 
-**Aggregation** (`summarize`). Per `(step, layer)` we average `ratio`,
-`silhouette`, and `centroid_dist` over words. Reading these curves against the
+**Aggregation** (`summarize`). Per `(step, layer)` we average `silhouette`,
+`ratio`, and `centroid_dist` over words, and report `frac_separated` = the
+share of words whose senses have split into distinct clouds (silhouette >
+`SEPARATED_SILHOUETTE`, default 0.1). Reading these curves against the
 checkpoint axis is how we date the *onset* of sense separation: the step at
-which they lift off their `ratio ≈ 1` / `silhouette ≈ 0` baseline.
+which they lift off their `silhouette ≈ 0` / `ratio ≈ 1` baseline.
+
+The analysis runs one **worker process per checkpoint** (`--workers`,
+0 = auto = `min(#checkpoints, #cpus)`); checkpoints are independent `.npz`
+files, so this scales near-linearly with no shared state.
 
 **Robustness details worth knowing when checking the method:**
 
@@ -178,12 +185,15 @@ uv run python -m wsd_probe all
 # Or stage by stage
 uv run python -m wsd_probe data
 uv run python -m wsd_probe extract --model EleutherAI/pythia-6.9b --batch-size 8
-uv run python -m wsd_probe analyze
+uv run python -m wsd_probe analyze --workers 0   # 0 = one process per checkpoint
 uv run python -m wsd_probe plot
 ```
 
 Useful flags:
 
+- `--workers` — analysis processes, one checkpoint each (`0` = auto =
+  `min(#checkpoints, #cpus)`, `1` = serial). The analysis is cheap and pure
+  NumPy; this mostly hides the `.npz` load time.
 - `--steps 0,1,2,...,143000` — which Pythia revisions to load (default:
   `extract.DEFAULT_STEPS = 1000,16000,32000,64000,128000,143000`; add earlier
   steps like `0,512` to catch onset earlier in training).
@@ -229,16 +239,17 @@ uv run python -m wsd_probe all --model EleutherAI/pythia-70m \
 
 ## Interpretation aids
 
-- **ratio ≈ 1 / silhouette ≈ 0** → senses are indistinguishable at that
-  layer/step; the checkpoint where the curves leave the baseline marks the
-  onset of sense separation.
+- **The question is "one cloud or two?"** `silhouette ≈ 0` (and `ratio ≈ 1`)
+  means the senses are still one blob; `silhouette → 1` (`ratio ≫ 1`) means two
+  separated clouds. The checkpoint where the curves leave that baseline is the
+  onset of sense separation. `cloud_split.png` shows the same thing directly.
 - **Probe layers** (`TARGET_LAYERS = {8, 16, 24, 32}`) are mid-to-late
   transformer blocks. To recover a static-embedding control (separation
   attributable to spelling/morphology alone, before any contextualization),
   add an early layer such as `1` to `TARGET_LAYERS` and re-extract.
-- **centroid_dist** is the coarsest signal (prototype-to-prototype distance);
-  **ratio** and **silhouette** additionally account for within-sense scatter,
-  so they are the more honest "are senses separated?" measures.
+- **silhouette** is the headline "separated or not?" score; **ratio** is an
+  intuitive companion; **centroid_dist** is the coarsest (prototype-to-prototype
+  only, ignoring within-sense scatter).
 - Small `n` per sense makes centroids noisy: treat single-cell numbers as
-  exploratory and read the *aggregate* curves (`summary.csv`) and per-word
-  trajectories, where the noise averages out.
+  exploratory and read the *aggregate* curves (`summary.csv`) and the
+  `cloud_split.png` panels, where the picture is clearest.

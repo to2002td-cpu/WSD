@@ -111,65 +111,91 @@ def analyze_word(
     return rows
 
 
+# A word's senses count as "separated into distinct clouds" once the
+# nearest-centroid silhouette clears this small margin above zero (0 = one
+# blob). It is only used for the summary's frac_separated headline.
+SEPARATED_SILHOUETTE = 0.1
+
+
+def analyze_checkpoint(npz_path: Path, records: "list[dict]") -> "list[dict]":
+    """All (word, layer) separation rows for a single checkpoint file.
+
+    Self-contained so it can run in a worker process: it rebuilds the metadata
+    index from `records` and reads exactly one `.npz`.
+    """
+    meta = pd.DataFrame(records)
+    meta["row"] = np.arange(len(meta))
+
+    step = int(npz_path.stem.removeprefix("step"))
+    vectors = np.load(npz_path)["vectors"]
+    # Rows lost to truncation were left as zeros -> drop them.
+    valid = np.linalg.norm(vectors[:, -1, :].astype(np.float32), axis=1) > 0
+
+    rows = []
+    for (word, pos), group in meta.groupby(["word", "pos"]):
+        g = group[valid[group["row"].to_numpy()]]
+        # A sense may lose instances to truncation; keep senses that still have
+        # >= 2 examples, and words with >= 2 such senses.
+        counts = g["sense"].value_counts()
+        g = g[g["sense"].isin(counts[counts >= 2].index)]
+        if g["sense"].nunique() < 2:
+            continue
+
+        word_vecs = vectors[g["row"].to_numpy()]
+        senses = g["sense"].to_numpy()
+        for row in analyze_word(word_vecs, senses):
+            row.update(
+                word=word, pos=pos, step=step,
+                n_senses=int(g["sense"].nunique()), n_instances=len(g),
+            )
+            rows.append(row)
+    return rows
+
+
 def analyze_all(
     records: "list[dict]",
     embeddings_dir: Path,
     out_csv: Path,
+    workers: int = 1,
 ) -> pd.DataFrame:
-    """Run the analysis for every word x layer x checkpoint found on disk."""
-    meta = pd.DataFrame(records)
-    meta["row"] = np.arange(len(meta))
+    """Run the analysis for every word x layer x checkpoint found on disk.
 
+    Checkpoints are independent (one `.npz` each), so they are the unit of
+    parallelism: `workers > 1` fans them out over a process pool.
+    """
     npz_files = sorted(
         embeddings_dir.glob("step*.npz"),
         key=lambda p: int(p.stem.removeprefix("step")),
     )
     if not npz_files:
         raise FileNotFoundError(f"No step*.npz found in {embeddings_dir}")
-    log.info("Analyzing %d checkpoints from %s", len(npz_files), embeddings_dir)
+
+    if workers <= 0:
+        import os
+        workers = min(len(npz_files), os.cpu_count() or 1)
+    workers = min(workers, len(npz_files))
+    log.info(
+        "Analyzing %d checkpoints from %s (%d worker%s)",
+        len(npz_files), embeddings_dir, workers, "" if workers == 1 else "s",
+    )
 
     from tqdm import tqdm
 
-    all_rows = []
-    for npz_path in tqdm(
-        npz_files, desc="checkpoints", unit="ckpt", dynamic_ncols=True
-    ):
-        step = int(npz_path.stem.removeprefix("step"))
-        vectors = np.load(npz_path)["vectors"]
-        # Rows lost to truncation were left as zeros -> drop them.
-        valid = np.linalg.norm(
-            vectors[:, -1, :].astype(np.float32), axis=1
-        ) > 0
+    all_rows: "list[dict]" = []
+    if workers == 1:
+        for npz_path in tqdm(npz_files, desc="checkpoints", unit="ckpt",
+                             dynamic_ncols=True):
+            all_rows.extend(analyze_checkpoint(npz_path, records))
+    else:
+        from concurrent.futures import ProcessPoolExecutor
+        from functools import partial
 
-        word_groups = meta.groupby(["word", "pos"])
-        words_bar = tqdm(
-            word_groups, desc=f"  step{step} words", unit="word",
-            leave=False, dynamic_ncols=True,
-        )
-        for (word, pos), group in words_bar:
-            rows_idx = group["row"].to_numpy()
-            ok = valid[rows_idx]
-            g = group[ok]
-            # A sense may lose instances to truncation; keep senses that
-            # still have >= 2 examples, and words with >= 2 such senses.
-            counts = g["sense"].value_counts()
-            keep_senses = counts[counts >= 2].index
-            g = g[g["sense"].isin(keep_senses)]
-            if g["sense"].nunique() < 2:
-                continue
-
-            word_vecs = vectors[g["row"].to_numpy()]
-            senses = g["sense"].to_numpy()
-            for row in analyze_word(word_vecs, senses):
-                row.update(
-                    word=word,
-                    pos=pos,
-                    step=step,
-                    n_senses=int(g["sense"].nunique()),
-                    n_instances=len(g),
-                )
-                all_rows.append(row)
-        log.info("step %d done", step)
+        work = partial(analyze_checkpoint, records=records)
+        with ProcessPoolExecutor(max_workers=workers) as ex:
+            for rows in tqdm(ex.map(work, npz_files), total=len(npz_files),
+                             desc="checkpoints", unit="ckpt",
+                             dynamic_ncols=True):
+                all_rows.extend(rows)
 
     df = pd.DataFrame(all_rows)
     out_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -179,13 +205,18 @@ def analyze_all(
 
 
 def summarize(df: pd.DataFrame) -> pd.DataFrame:
-    """Aggregate over words: mean separation per (step, layer)."""
+    """Aggregate over words per (step, layer): mean separation, and the share
+    of words whose senses have separated into distinct clouds."""
     agg = (
         df.groupby(["step", "layer"])
         .agg(
-            ratio_mean=("ratio", "mean"),
             silhouette_mean=("silhouette", "mean"),
+            ratio_mean=("ratio", "mean"),
             centroid_dist_mean=("centroid_dist", "mean"),
+            frac_separated=(
+                "silhouette",
+                lambda s: float((s > SEPARATED_SILHOUETTE).mean()),
+            ),
             n_words=("word", "nunique"),
         )
         .reset_index()

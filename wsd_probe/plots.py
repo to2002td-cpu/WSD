@@ -34,6 +34,10 @@ BLUE_SEQ = ["#cde2fb", "#9ec5f4", "#86b6ef", "#6da7ec", "#5598e7",
             "#3987e5", "#2a78d6", "#256abf", "#1c5cab", "#184f95", "#0d366b"]
 BLUE_ORDINAL = BLUE_SEQ[2:]
 
+# Categorical palette for coloring senses in the cloud-split scatter (distinct
+# hues, colorblind-mindful): blue, orange, green, red, purple, teal.
+CATEGORICAL = ["#2a78d6", "#e0872e", "#3a923a", "#c0504d", "#7b5cc4", "#4aa3a2"]
+
 CMAP_SEQ = LinearSegmentedColormap.from_list("blue_seq", BLUE_SEQ)
 
 
@@ -136,76 +140,125 @@ def plot_layer_step_heatmap(
     log.info("Wrote %s", out)
 
 
-def plot_per_word(
-    df: pd.DataFrame, out: Path, metric: str = "silhouette", top_k: int = 12
+def _pca_2d(x: np.ndarray) -> np.ndarray:
+    """Project rows onto their top 2 principal directions (unit-normalized
+    first, matching the cosine geometry of the analysis)."""
+    x = x.astype(np.float32)
+    x = x / np.maximum(np.linalg.norm(x, axis=1, keepdims=True), 1e-8)
+    x = x - x.mean(axis=0, keepdims=True)
+    _, _, vt = np.linalg.svd(x, full_matrices=False)
+    return x @ vt[:2].T
+
+
+def plot_cloud_split(
+    df: pd.DataFrame,
+    records: "list[dict]",
+    emb_dir: Path,
+    out: Path,
+    n_words: int = 3,
+    n_steps: int = 5,
 ) -> None:
-    """Small multiples: best-layer separation trajectory for the words whose
-    final-checkpoint separation is highest (chosen from the data, not a
-    priori)."""
-    final_step = df["step"].max()
-    best = (
-        df[df["step"] == final_step]
-        .groupby("word")[metric]
-        .max()
-        .sort_values(ascending=False)
-        .head(top_k)
+    """The headline figure: does one cloud split into two?
+
+    A grid of 2-D PCA scatters — rows are the words whose senses separate most
+    by the final checkpoint (data-selected), columns are checkpoints. Each
+    point is one occurrence, colored by its annotated sense. You should see a
+    single blob at early steps pull apart into distinct clouds as training
+    proceeds.
+    """
+    meta = pd.DataFrame(records)
+    meta["row"] = np.arange(len(meta))
+
+    final = int(df["step"].max())
+    fin = df[df["step"] == final]
+    # Words that end up most separated, and each word's best-separating layer.
+    words = list(
+        fin.groupby("word")["silhouette"].max()
+        .sort_values(ascending=False).head(n_words).index
     )
-    words = list(best.index)
-    ncols = 4
-    nrows = int(np.ceil(len(words) / ncols))
+    best_layer = {
+        w: int(fin[fin["word"] == w].set_index("layer")["silhouette"].idxmax())
+        for w in words
+    }
+
+    steps = sorted(df["step"].unique())
+    if len(steps) > n_steps:
+        idx = np.linspace(0, len(steps) - 1, n_steps).round().astype(int)
+        steps = [steps[i] for i in idx]
+
     fig, axes = plt.subplots(
-        nrows, ncols, figsize=(3.1 * ncols, 2.3 * nrows),
-        sharex=True, sharey=True, squeeze=False,
+        len(words), len(steps),
+        figsize=(2.5 * len(steps), 2.5 * len(words)),
+        squeeze=False,
     )
     for ax in axes.flat:
-        ax.set_visible(False)
-    for i, word in enumerate(words):
-        ax = axes[i // ncols][i % ncols]
-        ax.set_visible(True)
-        d = df[df["word"] == word]
-        # Per word, plot the layer that ends up most separating that word:
-        # the layer is data-selected, per word.
-        best_layer = d[d["step"] == final_step].set_index("layer")[metric].idxmax()
-        traj = d[d["layer"] == best_layer].sort_values("step")
-        ax.plot(traj["step"], traj[metric], color=BLUE_ORDINAL[-4])
-        _step_axis(ax)
-        ax.set_title(f"{word} (L{best_layer})", loc="left", fontsize=9,
-                     color=INK)
-        if i % ncols == 0:
-            ax.set_ylabel(metric)
-        if i // ncols < nrows - 1:
-            ax.set_xlabel("")
+        ax.set_xticks([]); ax.set_yticks([]); ax.grid(False)
+
+    word_meta = {w: meta[meta["word"] == w] for w in words}
+    for j, step in enumerate(steps):
+        npz = emb_dir / f"step{step}.npz"
+        if not npz.exists():
+            continue
+        vectors = np.load(npz)["vectors"]
+        valid = np.linalg.norm(vectors[:, -1, :].astype(np.float32), axis=1) > 0
+        for i, word in enumerate(words):
+            ax = axes[i][j]
+            g = word_meta[word]
+            g = g[valid[g["row"].to_numpy()]]
+            counts = g["sense"].value_counts()
+            g = g[g["sense"].isin(counts[counts >= 2].index)]
+            if g["sense"].nunique() < 2:
+                continue
+            xy = _pca_2d(vectors[g["row"].to_numpy(), best_layer[word], :])
+            senses = sorted(g["sense"].unique())
+            sense_arr = g["sense"].to_numpy()
+            for k, s in enumerate(senses):
+                m = sense_arr == s
+                ax.scatter(xy[m, 0], xy[m, 1], s=16, alpha=0.75,
+                           color=CATEGORICAL[k % len(CATEGORICAL)],
+                           label=s.split(".", 1)[-1], edgecolors="none")
+            if i == 0:
+                ax.set_title(f"step {step}", fontsize=10, color=INK)
+            if j == 0:
+                ax.set_ylabel(f"{word}\n(L{best_layer[word]})", fontsize=9,
+                              color=INK, rotation=0, ha="right", va="center",
+                              labelpad=18)
+            if j == len(steps) - 1:
+                ax.legend(fontsize=7, loc="center left",
+                          bbox_to_anchor=(1.0, 0.5), handletextpad=0.2)
+
     fig.suptitle(
-        f"Per-word sense separation ({metric}, best layer per word)",
+        "Do the sense clouds separate over pre-training? (2-D PCA per word)",
         x=0.01, ha="left", color=INK,
     )
-    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    fig.tight_layout(rect=(0.02, 0, 1, 0.96))
     fig.savefig(out, dpi=200)
     plt.close(fig)
     log.info("Wrote %s", out)
 
 
-def make_all_plots(df: pd.DataFrame, summary: pd.DataFrame, out_dir: Path) -> None:
+def make_all_plots(
+    df: pd.DataFrame,
+    summary: pd.DataFrame,
+    out_dir: Path,
+    records: "list[dict]",
+    emb_dir: Path,
+) -> None:
     _style()
     out_dir.mkdir(parents=True, exist_ok=True)
+    # The direct visual answer: one blob or two clouds, over training.
+    plot_cloud_split(df, records, emb_dir, out_dir / "cloud_split.png")
+    # Aggregate separation as a single number over training.
     plot_metric_vs_step(
-        summary, "silhouette_mean", "Mean silhouette (cosine)",
-        out_dir / "silhouette_vs_step.png",
+        summary, "silhouette_mean",
+        "Mean silhouette  (0 = one cloud, 1 = two clouds)",
+        out_dir / "separation_vs_step.png",
     )
     plot_metric_vs_step(
-        summary, "ratio_mean", "Mean inter/intra distance ratio",
-        out_dir / "ratio_vs_step.png",
-    )
-    plot_metric_vs_step(
-        summary, "centroid_dist_mean", "Mean centroid cosine distance",
-        out_dir / "centroid_dist_vs_step.png",
+        summary, "frac_separated", "Fraction of words with separated senses",
+        out_dir / "frac_separated_vs_step.png",
     )
     plot_layer_step_heatmap(
         summary, "silhouette_mean", "Mean silhouette",
         out_dir / "heatmap_silhouette.png",
     )
-    plot_layer_step_heatmap(
-        summary, "centroid_dist_mean", "Mean centroid distance",
-        out_dir / "heatmap_centroid_dist.png",
-    )
-    plot_per_word(df, out_dir / "per_word_trajectories.png")
