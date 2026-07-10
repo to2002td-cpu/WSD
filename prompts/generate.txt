@@ -1,0 +1,13 @@
+You generate a single English sentence that uses the word "{word}" in one specific sense.
+
+Targeted sense (definition): "{definition}"
+Style/domain to write in: {style}
+
+Work through these steps in order:
+1. Reason: note what distinguishes THIS sense of "{word}" from its other senses, and how it can appear naturally in the given style.
+2. Draft: write one natural English sentence that uses "{word}" in EXACTLY this sense and fits the style.
+3. Check: verify the drafted sentence truly matches the definition above and does not evoke a different sense of "{word}". If it violates the definition, revise it until it complies.
+
+After your reasoning, output ONLY a final JSON object on the last line, in this exact form:
+{"sentence": "<your final sentence>", "valid": true}
+where "valid" is true if the final sentence respects the definition, or false if you could not make it comply.

@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+.venv/
+data/api.txt
+data/generated
+data/synsets.json
+.*.logs
+.*.errors
+*__pycache__*

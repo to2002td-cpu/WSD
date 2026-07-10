@@ -3,13 +3,21 @@ name = "wsd-probe"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
-    "matplotlib>=3.11.0",
     "nltk>=3.9.4",
     "numpy>=2.4.6",
-    "pandas>=3.0.3",
-    "scikit-learn>=1.9.0",
-    "scipy>=1.17.1",
+    "pyyaml>=6.0",
+    "requests>=2.32.0",
     "torch>=2.12.1",
     "tqdm>=4.68.4",
     "transformers>=5.13.0",
+]
+
+# `plot` only: kept optional so the generate/extract jobs skip the UMAP stack.
+#   uv sync --extra plot
+[project.optional-dependencies]
+plot = [
+    "matplotlib>=3.11.0",
+    "pandas>=3.0.3",
+    "umap-learn>=0.5.7",
+    "numba>=0.60",
 ]
