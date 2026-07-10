@@ -35,13 +35,19 @@ def main() -> None:
 
     for name, helptext in [
         ("plot", "per-word UMAP scatter grid (layer x checkpoint)"),
-        ("heatmap", "per-word UMAP density grid, thermal (layer x checkpoint)"),
+        ("heatmap", "per-word UMAP thermal density grid (layer x checkpoint)"),
+        ("density", "per-word UMAP scatter + per-sense KDE grid"),
+        ("interactive", "per-word interactive Plotly UMAP (HTML)"),
+        ("panel", "single large publication panel for one layer+checkpoint"),
     ]:
         sp = sub.add_parser(name, help=helptext)
         sp.add_argument("word", help="target lemma, e.g. 'bank'")
         sp.add_argument("--pos", default=None, help="WordNet POS (n/v/a/r); default = most frequent")
         sp.add_argument("--only", nargs="+", metavar="LEMMA.POS",
                         help="read the run extracted with the same --only (e.g. bank.n)")
+        if name == "panel":
+            sp.add_argument("--layer", type=int, default=None, help="hidden layer (default = middle)")
+            sp.add_argument("--step", type=int, default=None, help="checkpoint step (default = last)")
 
     args = parser.parse_args()
     cfg = load_config(args.config)
@@ -63,6 +69,15 @@ def main() -> None:
     elif args.cmd == "heatmap":
         from .heatmap import heatmap
         heatmap(cfg, args.word, args.pos, args.only)
+    elif args.cmd == "density":
+        from .density import density
+        density(cfg, args.word, args.pos, args.only)
+    elif args.cmd == "interactive":
+        from .interactive import interactive
+        interactive(cfg, args.word, args.pos, args.only)
+    elif args.cmd == "panel":
+        from .panel import panel
+        panel(cfg, args.word, args.pos, args.only, args.layer, args.step)
 
 
 if __name__ == "__main__":
