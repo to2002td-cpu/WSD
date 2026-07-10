@@ -201,7 +201,7 @@ def _fill_lemma(client, template, lemma, senses, need, cap, styles, pool, out) -
 def generate(cfg: dict) -> None:
     gen = cfg["generate"]
     synsets = load_or_build_synsets(
-        store(cfg, cfg["synsets_cache"]), resolve(cfg["lemmas_file"])
+        store(cfg, cfg["synsets_cache"]), resolve(cfg["lemmas_file"]), cfg.get("synsets_pos")
     )
 
     styles = json.loads(resolve(gen["styles_file"]).read_text())

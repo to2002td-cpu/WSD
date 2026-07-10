@@ -48,13 +48,15 @@ def _is_proper(syn, lemma: str) -> bool:
     return match is not None and match.name()[:1].isupper()
 
 
-def build_synsets(lemmas: "list[str]") -> "list[dict]":
+def build_synsets(lemmas: "list[str]", keep_pos: "list[str] | None" = None) -> "list[dict]":
     """Every WordNet synset of each lemma, grouped by (lemma, pos).
 
-    Proper-noun senses are dropped."""
+    Proper-noun senses are dropped. ``keep_pos`` (e.g. ``["n"]``) restricts to
+    those merged parts of speech; ``None`` keeps all content POS."""
     _ensure_nltk_data()
     from nltk.corpus import wordnet as wn
 
+    keep = set(keep_pos) if keep_pos else None
     groups: dict[tuple[str, str], dict[str, str]] = {}
     for lemma in lemmas:
         for syn in wn.synsets(lemma):
@@ -64,6 +66,8 @@ def build_synsets(lemmas: "list[str]") -> "list[dict]":
             if _is_proper(syn, lemma):
                 continue
             pos = "a" if pos == "s" else pos
+            if keep is not None and pos not in keep:
+                continue
             groups.setdefault((lemma, pos), {})[syn.name()] = syn.definition()
 
     out = [
@@ -78,12 +82,13 @@ def build_synsets(lemmas: "list[str]") -> "list[dict]":
     return out
 
 
-def load_or_build_synsets(cache: Path, lemmas_file: Path) -> "list[dict]":
+def load_or_build_synsets(cache: Path, lemmas_file: Path,
+                          keep_pos: "list[str] | None" = None) -> "list[dict]":
     """Synsets from the cache file, built from the lemmas file on first use."""
     if cache.exists():
         with cache.open() as f:
             return json.load(f)
-    synsets = build_synsets(read_lemmas(lemmas_file))
+    synsets = build_synsets(read_lemmas(lemmas_file), keep_pos)
     cache.parent.mkdir(parents=True, exist_ok=True)
     with cache.open("w") as f:
         json.dump(synsets, f, indent=2)

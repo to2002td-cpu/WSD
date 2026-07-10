@@ -2,8 +2,12 @@
 # Pool target-word hidden states from Pythia checkpoints.
 # Submit with:  oarsub -S ./scripts/extract.sh
 #
+# Extraction is resumable per checkpoint (each step*.npz is skipped if present),
+# so if the walltime is hit mid-run, re-submit to continue with the next
+# checkpoint. One .npz over the full top-100 corpus is large (~tens of GB); make
+# sure storage_root points at group storage with room for ~10 of them.
 #OAR -q production
-#OAR -l {gpu_mem > 20000}/host=1/gpu=1,walltime=12:0:0
+#OAR -l {gpu_mem > 20000}/host=1/gpu=1,walltime=24:0:0
 #OAR -O .extract.logs
 #OAR -E .extract.errors
 set -euo pipefail

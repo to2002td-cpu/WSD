@@ -8,6 +8,10 @@ data/datasets
 data/dataset.jsonl
 data/embeddings
 data/figures
+# local run outputs / local embeddings (real outputs live under storage_root)
+/figures
+/mmd
+/data/Pythia-6.9B
 .*.logs
 .*.errors
 *__pycache__*
