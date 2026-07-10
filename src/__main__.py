@@ -28,11 +28,20 @@ def main() -> None:
 
     sub.add_parser("synsets", help="build synsets.json from lemmas.txt")
     sub.add_parser("generate", help="stage 1 (CPU): synthesize sentences via API")
-    sub.add_parser("extract", help="stage 2 (GPU): pool hidden states per checkpoint")
 
-    p = sub.add_parser("plot", help="per-word UMAP grid (layer x checkpoint)")
-    p.add_argument("word", help="target lemma, e.g. 'bank'")
-    p.add_argument("--pos", default=None, help="WordNet POS (n/v/a/r); default = most frequent")
+    e = sub.add_parser("extract", help="stage 2 (GPU): pool hidden states per checkpoint")
+    e.add_argument("--only", nargs="+", metavar="LEMMA.POS",
+                   help="restrict to these generated files (e.g. bank.n); default = all")
+
+    for name, helptext in [
+        ("plot", "per-word UMAP scatter grid (layer x checkpoint)"),
+        ("heatmap", "per-word UMAP density grid, thermal (layer x checkpoint)"),
+    ]:
+        sp = sub.add_parser(name, help=helptext)
+        sp.add_argument("word", help="target lemma, e.g. 'bank'")
+        sp.add_argument("--pos", default=None, help="WordNet POS (n/v/a/r); default = most frequent")
+        sp.add_argument("--only", nargs="+", metavar="LEMMA.POS",
+                        help="read the run extracted with the same --only (e.g. bank.n)")
 
     args = parser.parse_args()
     cfg = load_config(args.config)
@@ -47,10 +56,13 @@ def main() -> None:
     elif args.cmd == "extract":
         from .dataset import build_dataset
         from .extract import extract
-        extract(cfg, build_dataset(cfg))
+        extract(cfg, build_dataset(cfg, args.only), args.only)
     elif args.cmd == "plot":
         from .word import plot
-        plot(cfg, args.word, args.pos)
+        plot(cfg, args.word, args.pos, args.only)
+    elif args.cmd == "heatmap":
+        from .heatmap import heatmap
+        heatmap(cfg, args.word, args.pos, args.only)
 
 
 if __name__ == "__main__":

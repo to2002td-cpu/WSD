@@ -41,3 +41,16 @@ def store(cfg: dict, p: str | Path) -> Path:
     if not base.is_absolute():
         base = ROOT / base
     return base / p
+
+
+def run_paths(cfg: dict, only: "list[str] | None" = None) -> "tuple[Path, Path]":
+    """(dataset_path, emb_dir) for a run. `only` is a list of generated stems
+    (e.g. ['bank.n']) to restrict to, keeping the dataset and its embeddings
+    scoped together under a tag so subsets never clobber the full corpus.
+    None -> the full corpus at the configured default paths."""
+    model = cfg["extract"]["model"].split("/")[-1]
+    emb_dir = store(cfg, cfg["extract"]["emb_dir"]) / model
+    if not only:
+        return store(cfg, cfg["dataset"]["path"]), emb_dir
+    tag = "_".join(sorted(s.removesuffix(".jsonl") for s in only))
+    return store(cfg, "datasets") / f"{tag}.jsonl", emb_dir / tag

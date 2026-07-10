@@ -19,7 +19,7 @@ from .plots import INK, _style
 
 log = logging.getLogger(__name__)
 
-MIN_PER_SENSE = 6    # a sense needs this many occurrences to be shown
+MIN_PER_SENSE = 0    # a sense needs this many occurrences to be shown
 # Distinct, print-legible categorical palette (Tableau-10 order, faint hues last).
 SENSE_PALETTE = ["#4e79a7", "#f28e2b", "#59a14f", "#e15759", "#b07aa1",
                  "#76b7b2", "#9c755f", "#ff9da7", "#edc948", "#bab0ac"]
@@ -87,11 +87,10 @@ def _select(records, emb_dir, word, pos, min_per_sense, cache_dir):
     g = g[valid[g["row"].to_numpy()]]
 
     counts = g["sense"].value_counts()   # descending
-    # Keep only synsets whose own lemma IS the target word — e.g. drop
-    # clock_time.n.01 / fourth_dimension.n.01, where "time" is just a synonym.
+    # Every generated synset of the word, incl. ones where it is a synonym
+    # member (e.g. savings_bank.n.02 for "bank"); palette-many, best-attested.
     senses = [s for s, c in counts.items()
-              if c >= min_per_sense
-              and s.rsplit(".", 2)[0] == word][:len(SENSE_PALETTE)]
+              if c >= min_per_sense][:len(SENSE_PALETTE)]
     if len(senses) < 2:
         raise SystemExit(
             f"'{word}' ({pos}) has <2 senses with >= {min_per_sense} "
@@ -137,8 +136,8 @@ def visualize_word(records, emb_dir, word, pos, fig_dir,
             P = _umap2(W)
             for s in senses:
                 m = labels == s
-                ax.scatter(P[m, 0], P[m, 1], s=12, c=color[s], alpha=0.85,
-                           edgecolor="white", linewidth=0.2)
+                ax.scatter(P[m, 0], P[m, 1], s=3, c=color[s], alpha=0.35,
+                           edgecolor="none", rasterized=True)
             if r == 0:
                 ax.set_title(f"step {step:,}", color=INK, fontsize=11)
             if c == 0:
@@ -160,15 +159,15 @@ def visualize_word(records, emb_dir, word, pos, fig_dir,
     log.info("Wrote %s", out)
 
 
-def plot(cfg: dict, word: str, pos: str | None) -> None:
+def plot(cfg: dict, word: str, pos: str | None, only: "list[str] | None" = None) -> None:
     """Config-driven entry point: UMAP grid for one word."""
-    from .config import store
+    from .config import run_paths, store
     from .dataset import build_dataset
 
-    ex, p = cfg["extract"], cfg["plot"]
-    emb_dir = store(cfg, ex["emb_dir"]) / ex["model"].split("/")[-1]
+    p = cfg["plot"]
+    _, emb_dir = run_paths(cfg, only)
     cache_dir = (emb_dir / "_npy_cache") if p["npy_cache"] else None
-    records = build_dataset(cfg)
+    records = build_dataset(cfg, only)
     visualize_word(
         records, emb_dir, word, pos, store(cfg, p["fig_dir"]),
         cache_dir=cache_dir, min_per_sense=p["min_per_sense"],

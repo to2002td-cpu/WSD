@@ -39,26 +39,35 @@ def _locate_target(sentence: str, word: str, pos: str | None = None):
     return None
 
 
-def _read_generated(gen_dir: Path) -> "list[dict]":
+def _read_generated(gen_dir: Path, only: "list[str] | None" = None) -> "list[dict]":
+    if only:
+        paths = [gen_dir / f"{s.removesuffix('.jsonl')}.jsonl" for s in only]
+        missing = [p.name for p in paths if not p.exists()]
+        if missing:
+            raise SystemExit(f"No such generated file(s) in {gen_dir}: {missing}")
+    else:
+        paths = sorted(gen_dir.glob("*.jsonl"))
     rows: list[dict] = []
-    for path in sorted(gen_dir.glob("*.jsonl")):
+    for path in sorted(paths):
         with path.open() as f:
             rows.extend(json.loads(line) for line in f if line.strip())
     return rows
 
 
-def build_dataset(cfg: dict) -> "list[dict]":
-    """Build (or reuse) the extraction dataset from the generated sentences."""
-    ds = cfg["dataset"]
-    from .config import store
+def build_dataset(cfg: dict, only: "list[str] | None" = None) -> "list[dict]":
+    """Build (or reuse) the extraction dataset from the generated sentences.
 
-    out_path = store(cfg, ds["path"])
+    `only` restricts it to the given generated stems (e.g. ['bank.n'])."""
+    ds = cfg["dataset"]
+    from .config import run_paths, store
+
+    out_path, _ = run_paths(cfg, only)
     if out_path.exists():
         log.info("Dataset %s exists, reusing", out_path)
         return load_dataset(out_path)
 
     gen_dir = store(cfg, cfg["generate"]["out_dir"])
-    raw = _read_generated(gen_dir)
+    raw = _read_generated(gen_dir, only)
     log.info("Loaded %d generated sentences from %s", len(raw), gen_dir)
 
     rng = random.Random(ds["seed"])

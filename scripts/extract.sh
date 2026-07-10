@@ -13,8 +13,8 @@ echo "OAR job ${OAR_JOB_ID:-?} on $(hostname) -- extract (GPU)"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null \
   || echo "WARNING: no GPU visible"
 
-# Node-local scratch for the HF cache (each pythia-6.9b revision is ~14 GB).
-export HF_HOME="${HF_HOME:-/tmp/$USER/hf_cache}"
+# Persistent HF cache on group storage (reused across jobs; see extract.cache_dir).
+export HF_HOME="${HF_HOME:-/home/tderrien/storage/cache/huggingface}"
 mkdir -p "$HF_HOME"
 
 if ! command -v uv >/dev/null 2>&1; then

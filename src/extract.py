@@ -64,7 +64,7 @@ def extract_checkpoint(
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     revision = f"step{step}"
-    out_path = emb_dir / model_name.split("/")[-1] / f"{revision}.npz"
+    out_path = emb_dir / f"{revision}.npz"
     if out_path.exists():
         log.info("%s already extracted, skipping", out_path)
         return out_path
@@ -147,13 +147,13 @@ def _purge_model_cache(model_name: str, cache_dir: str | None) -> None:
         log.info("Purged HF cache %s", target)
 
 
-def extract(cfg: dict, records: "list[dict]") -> Path:
+def extract(cfg: dict, records: "list[dict]", only: "list[str] | None" = None) -> Path:
     """Extract every configured checkpoint over the dataset."""
-    from .config import store
+    from .config import run_paths
 
     ex = cfg["extract"]
     model_name = ex["model"]
-    emb_dir = store(cfg, ex["emb_dir"])
+    _, emb_dir = run_paths(cfg, only)
     device = pick_device(ex["device"])
 
     for step in tqdm(ex["steps"], desc="checkpoints", unit="ckpt", dynamic_ncols=True):
@@ -164,4 +164,4 @@ def extract(cfg: dict, records: "list[dict]") -> Path:
         )
         if ex["purge_cache"]:
             _purge_model_cache(model_name, ex["cache_dir"])
-    return emb_dir / model_name.split("/")[-1]
+    return emb_dir

@@ -4,6 +4,10 @@ __pycache__/
 data/api.txt
 data/generated
 data/synsets.json
+data/datasets
+data/dataset.jsonl
+data/embeddings
+data/figures
 .*.logs
 .*.errors
 *__pycache__*

@@ -30,8 +30,8 @@ extract:
   max_length: 512
   device: null                   # cuda | mps | cpu (null = auto)
   emb_dir: embeddings
-  cache_dir: null
-  purge_cache: true
+  cache_dir: /home/tderrien/storage/cache/huggingface/hub   # HF hub cache (reused, not downloaded)
+  purge_cache: false             # true only bounds disk to 1 ckpt; deletes the cache above
 
 plot:
   fig_dir: figures
