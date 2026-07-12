@@ -1,0 +1,18 @@
+dataset:
+  path: dataset.jsonl
+  require_valid: true
+  min_examples_per_sense: 1
+  max_examples_per_sense: 9999
+  seed: 42
+
+plot:
+  fig_dir: figures
+  min_per_sense: 6
+  npy_cache: false                 # read straight from the .npz (no unzipped .npy twins)
+
+purity:                            # sense-cluster purity (k-NN neighbourhood purity)
+  out_dir: purity
+  max_per_sense: 1000              # balanced cap per sense (kNN is O(n^2))
+  max_senses: 12
+  knn_ks: [5, 10, 20, 50, 100, 200, 500, 1000, 2000]   # neighbour counts for the purity surface
+  seed: 0

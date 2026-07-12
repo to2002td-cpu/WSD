@@ -1,0 +1,16 @@
+# Base run config: composes the concern files and sets project-level keys.
+# `--model NAME` merges configs/models/NAME.yaml; `--lemmas NAME` swaps the study list.
+include:
+  - generation.yaml
+  - extraction.yaml
+  - analysis.yaml
+
+storage_root: /home/tderrien/WSD/data
+
+lemmas_file: lemmas/nouns_top50.txt   # default study set (top-50 nouns by frequency)
+synsets_cache: synsets.json
+synsets_pos: [n]                       # restrict studied senses to nouns (null = all content POS)
+
+hub:                                   # push generated sentences to a HF dataset repo
+  repo_id: ""                          # e.g. your-org/wsd-sentences; token from $HF_TOKEN
+  private: true

@@ -1,0 +1,12 @@
+extract:
+  model: EleutherAI/pythia-6.9b    # default; --model configs/models/<M>.yaml overrides
+  layers: [1, 8, 16, 24, 32]       # 1-indexed hidden layers (pythia-6.9b has 32)
+  steps: [0, 512, 1000, 5000, 20000, 50000, 100000, 143000]   # grounded Pythia step{N} branches
+  revision_format: "step{step}"    # models with token-tagged branches list them in `revisions`
+  trust_remote_code: false         # required by some non-HF-native checkpoints (e.g. original OLMo)
+  batch_size: 128
+  max_length: 512
+  device: null                     # cuda | mps | cpu (null = auto)
+  emb_dir: embeddings
+  cache_dir: /home/tderrien/storage/cache/huggingface/hub
+  purge_cache: true                # drop each checkpoint's weights after use

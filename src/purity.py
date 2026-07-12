@@ -4,8 +4,11 @@ For each occurrence, ``purity`` at neighbourhood size ``k`` is the fraction of i
 ``k`` cosine-nearest neighbours (raw hidden states, self excluded) that share its
 WordNet sense, averaged over a balanced sample. ``chance = 1/K`` (K balanced
 senses) is the fully-mixed floor. Being local, purity is robust to a sense
-splitting into several clusters. Sweeping ``k`` shows how far the purity reaches;
-the result is one 3-D surface over (k, layer) per checkpoint.
+splitting into several clusters; sweeping ``k`` shows how far it reaches.
+
+Compute and plot are separate: purity is written to ``{word}_purity.csv`` and the
+3-D surface is rendered from it, so re-running only re-plots (pass ``force`` to
+recompute the O(n^2) purity).
 """
 
 from __future__ import annotations
@@ -15,12 +18,23 @@ import logging
 
 import numpy as np
 
-from .umapcache import _layers, _load_vectors, _population, _valid_mask, displayed_senses
+from .embeddings import (
+    displayed_senses,
+    layers_of,
+    load_vectors,
+    population,
+    sorted_checkpoints,
+    valid_mask,
+)
 
 log = logging.getLogger(__name__)
 
 MIN_SAMPLES = 20     # a sense needs at least this many occurrences to be scored
 
+
+# --------------------------------------------------------------------------- #
+# Purity computation                                                          #
+# --------------------------------------------------------------------------- #
 
 def _balanced_idx(y: np.ndarray, k: int, max_per_sense: int, rng) -> np.ndarray:
     """Up to ``max_per_sense`` indices per sense, so chance is a clean 1/K."""
@@ -64,7 +78,7 @@ def _purity_at(X, y, n_senses, max_per_sense, ks, rng):
 
 
 def _prep_word(records, word, pos, valid, min_per_sense, max_senses):
-    meta, pos = _population(records, word, pos, valid)
+    meta, pos = population(records, word, pos, valid)
     senses = displayed_senses(meta, min_per_sense, max_senses)
     if len(senses) < 2:
         return None
@@ -73,42 +87,15 @@ def _prep_word(records, word, pos, valid, min_per_sense, max_senses):
     return dict(pos=pos, rows=meta["row"].to_numpy(), senses=senses, y=y)
 
 
-# --------------------------------------------------------------------------- #
-# Drivers                                                                      #
-# --------------------------------------------------------------------------- #
-
-def similarity_corpus(records, emb_dir, words, pos, out_dir, *, max_per_sense: int,
-                      max_senses: int, knn_ks: "list[int]", min_per_sense: int,
-                      cache_dir=None, seed: int = 0):
-    """Purity for many words, loading each checkpoint once. Writes a per-word CSV
-    and 3-D surface, then the corpus aggregate."""
-    out_dir.mkdir(parents=True, exist_ok=True)
-    npz_files = sorted(emb_dir.glob("step*.npz"), key=lambda p: int(p.stem.removeprefix("step")))
-    if not npz_files:
-        raise SystemExit(f"No step*.npz in {emb_dir}")
-    valid = _valid_mask(npz_files, cache_dir)
+def _compute(npz_files, plans, ks, max_per_sense, cache_dir, seed):
+    """Fill each plan's ``sweep`` in a single pass over the checkpoints."""
     steps = [int(p.stem.removeprefix("step")) for p in npz_files]
-    layers = _layers(npz_files[0])
-    ks = sorted(set(knn_ks))
-
-    plans: dict[str, dict] = {}
-    for word in words:
-        try:
-            plan = _prep_word(records, word, pos, valid, min_per_sense, max_senses)
-        except SystemExit as e:
-            log.warning("skip %s: %s", word, e)
-            continue
-        if plan is None:
-            log.warning("skip %s: <2 senses with >= %d occurrences", word, min_per_sense)
-            continue
-        plan.update(sweep={k: np.full((len(layers), len(steps)), np.nan) for k in ks},
-                    chance=1.0 / len(plan["senses"]))
-        plans[word] = plan
-    log.info("Purity: %d/%d words usable (k sweep %s)", len(plans), len(words), ks)
-
+    layers = layers_of(npz_files[0])
+    for plan in plans.values():
+        plan["sweep"] = {k: np.full((len(layers), len(steps)), np.nan) for k in ks}
     rng = np.random.default_rng(seed)
     for si, (npz, step) in enumerate(zip(npz_files, steps)):
-        vectors = _load_vectors(npz, cache_dir)
+        vectors = load_vectors(npz, cache_dir)
         for li in range(len(layers)):
             for plan in plans.values():
                 X = np.asarray(vectors[plan["rows"], li, :], np.float32)
@@ -118,22 +105,12 @@ def similarity_corpus(records, emb_dir, words, pos, out_dir, *, max_per_sense: i
                         plan["sweep"][k][li, si] = pu
         del vectors
         log.info("checkpoint %d done (%d words)", step, len(plans))
-
-    for word, plan in plans.items():
-        _write_csv(out_dir / f"{word}_purity.csv", steps, layers, ks,
-                   plan["sweep"], plan["chance"], len(plan["senses"]))
-        _surface(f"“{word}” ({plan['pos']}) — sense-cluster purity (k × layer per checkpoint)",
-                 ks, steps, layers, plan["sweep"], plan["chance"], out_dir / f"{word}_purity.png")
-    _aggregate(out_dir)
-    return plans
+    return steps, layers
 
 
-def similarity_word(records, emb_dir, word, pos, out_dir, **kw):
-    plans = similarity_corpus(records, emb_dir, [word], pos, out_dir, **kw)
-    if not plans:
-        raise SystemExit(f"'{word}' ({pos}) has <2 senses with >= {kw['min_per_sense']} occurrences.")
-    return plans
-
+# --------------------------------------------------------------------------- #
+# CSV I/O                                                                      #
+# --------------------------------------------------------------------------- #
 
 def _write_csv(path, steps, layers, ks, sweep, chance, n_senses):
     with path.open("w", newline="") as fh:
@@ -147,6 +124,90 @@ def _write_csv(path, steps, layers, ks, sweep, chance, n_senses):
     log.info("Wrote %s", path.name)
 
 
+def _read_csv(path):
+    """(steps, layers, ks, sweep, chance) from a purity CSV."""
+    from collections import defaultdict
+
+    vals: dict = defaultdict(lambda: np.nan)
+    ks_set, steps_set, layers_set = set(), set(), set()
+    chance = np.nan
+    for r in csv.DictReader(path.open()):
+        k, s, l = int(r["k"]), int(r["step"]), int(r["layer"])
+        ks_set.add(k); steps_set.add(s); layers_set.add(l)
+        chance = float(r["chance"])
+        if r["purity"] not in ("", "nan"):
+            vals[(k, l, s)] = float(r["purity"])
+    ks, steps, layers = sorted(ks_set), sorted(steps_set), sorted(layers_set)
+    sweep = {k: np.array([[vals[(k, l, s)] for s in steps] for l in layers]) for k in ks}
+    return steps, layers, ks, sweep, chance
+
+
+# --------------------------------------------------------------------------- #
+# Drivers                                                                      #
+# --------------------------------------------------------------------------- #
+
+def purity_corpus(records, emb_dir, words, pos, out_dir, *, max_per_sense: int,
+                  max_senses: int, knn_ks: "list[int]", min_per_sense: int,
+                  cache_dir=None, seed: int = 0, force: bool = False):
+    """Purity for many words. Words whose ``{word}_purity.csv`` exists are reused
+    (unless ``force``); the rest are computed in one checkpoint pass. Every word is
+    then rendered from its CSV, and the corpus aggregate is refreshed."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ks = sorted(set(knn_ks))
+    todo = [w for w in words if force or not (out_dir / f"{w}_purity.csv").exists()]
+
+    if todo:
+        npz_files = sorted_checkpoints(emb_dir)
+        valid = valid_mask(npz_files, cache_dir)
+        plans = {}
+        for word in todo:
+            try:
+                plan = _prep_word(records, word, pos, valid, min_per_sense, max_senses)
+            except SystemExit as e:
+                log.warning("skip %s: %s", word, e)
+                continue
+            if plan is None:
+                log.warning("skip %s: <2 senses with >= %d occurrences", word, min_per_sense)
+                continue
+            plans[word] = plan
+        log.info("Purity: computing %d word(s) (k sweep %s)", len(plans), ks)
+        if plans:
+            steps, layers = _compute(npz_files, plans, ks, max_per_sense, cache_dir, seed)
+            for word, plan in plans.items():
+                _write_csv(out_dir / f"{word}_purity.csv", steps, layers, ks,
+                           plan["sweep"], 1.0 / len(plan["senses"]), len(plan["senses"]))
+
+    rendered = 0
+    for word in words:
+        csv_path = out_dir / f"{word}_purity.csv"
+        if not csv_path.exists():
+            continue
+        steps, layers, kk, sweep, chance = _read_csv(csv_path)
+        _surface(f"“{word}” — sense-cluster purity (k × layer per checkpoint)",
+                 kk, steps, layers, sweep, chance, out_dir / f"{word}_purity.png")
+        rendered += 1
+    _aggregate(out_dir)
+    log.info("Purity done: %d figure(s) in %s", rendered, out_dir)
+
+
+def purity(cfg: dict, word: str, pos: str | None, only: "list[str] | None" = None,
+           force: bool = False) -> None:
+    from .config import run_paths, store
+
+    m = cfg.get("purity", {})
+    p = cfg["plot"]
+    _, emb_dir = run_paths(cfg, only)
+    cache_dir = (emb_dir / "_npy_cache") if p["npy_cache"] else None
+    from .dataset import build_dataset
+    records = build_dataset(cfg, only)
+    purity_corpus(
+        records, emb_dir, [word], pos, store(cfg, m.get("out_dir", "purity")),
+        max_per_sense=m.get("max_per_sense", 1000), max_senses=m.get("max_senses", 12),
+        knn_ks=m.get("knn_ks", [5, 10, 20, 50, 100, 200, 500, 1000, 2000]),
+        min_per_sense=p["min_per_sense"], cache_dir=cache_dir, seed=m.get("seed", 0), force=force,
+    )
+
+
 # --------------------------------------------------------------------------- #
 # 3-D purity surface (one panel per checkpoint)                                #
 # --------------------------------------------------------------------------- #
@@ -156,9 +217,8 @@ def _surface_z(ks, layers, sweep, si):
 
 
 def _surface(title, ks, steps, layers, sweep, chance, out_path):
-    """One 3-D purity surface over (k, layer) per checkpoint, shared z ∈ [0,1]
-    with a chance floor. Colour = purity (= height); read across the grid for the
-    training trajectory."""
+    """One 3-D purity surface over (k, layer) per checkpoint, shared z ∈ [0,1] with
+    a chance floor. Colour = purity (= height); read across the grid for training."""
     from matplotlib.cm import ScalarMappable
     from matplotlib.colors import Normalize
 
@@ -247,20 +307,3 @@ def _aggregate(out_dir):
     _surface(f"Top-{len(files)} nouns — mean sense-cluster purity (k × layer per checkpoint)",
              ks, steps, layers, sweep, float(np.nanmean(chance)), out_dir / "corpus_purity.png")
     log.info("Aggregated %d words -> corpus_purity.png", len(files))
-
-
-def similarity(cfg: dict, word: str, pos: str | None, only: "list[str] | None" = None) -> None:
-    from .config import run_paths, store
-    from .dataset import build_dataset
-
-    m = cfg.get("similarity", {})
-    p = cfg["plot"]
-    _, emb_dir = run_paths(cfg, only)
-    cache_dir = (emb_dir / "_npy_cache") if p["npy_cache"] else None
-    records = build_dataset(cfg, only)
-    similarity_word(
-        records, emb_dir, word, pos, store(cfg, m.get("out_dir", "similarity")),
-        max_per_sense=m.get("max_per_sense", 1000), max_senses=m.get("max_senses", 12),
-        knn_ks=m.get("knn_ks", [5, 10, 20, 50, 100, 200, 500, 1000, 2000]),
-        min_per_sense=p["min_per_sense"], cache_dir=cache_dir, seed=m.get("seed", 0),
-    )

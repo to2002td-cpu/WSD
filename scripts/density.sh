@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Analysis: per-word UMAP scatter + per-sense KDE grid.
-#   ./scripts/density.sh bank --pos n --only bank.n
+# Per-word per-sense KDE grid (PNG).  ./scripts/density.sh bank --model pythia-6.9b
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")/.."
 uv sync --extra plot

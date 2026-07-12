@@ -1,0 +1,12 @@
+generate:
+  api_url: https://ragarenn.eskemm-numerique.fr/sso/ch@t/api/chat/completions
+  api_key_file: data/api.txt
+  styles_file: prompts/styles.json
+  prompt_file: prompts/generate.txt
+  model: gemma-4-31b
+  max_tokens: 2048
+  per_synset: 1000               # sentences per sense; balanced 1000 / 20 styles = 50 each
+  max_attempts: 200              # per (sense, style) request cap
+  workers: 16
+  out_dir: generated
+  seed: 0

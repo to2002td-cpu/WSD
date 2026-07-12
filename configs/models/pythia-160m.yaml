@@ -1,0 +1,3 @@
+extract:
+  model: EleutherAI/pythia-160m
+  layers: [1, 3, 6, 9, 12]       # 12 hidden layers

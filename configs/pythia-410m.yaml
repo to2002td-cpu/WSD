@@ -1,4 +1,0 @@
-base: ../config.yaml
-extract:
-  model: EleutherAI/pythia-410m
-  layers: [1, 6, 12, 18, 24]     # pythia-410m has 24 hidden layers

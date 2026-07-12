@@ -1,11 +1,6 @@
 #!/bin/bash
-# Sense-cluster purity analysis over the whole corpus: k-NN neighbourhood purity
-# per word, then a corpus-level aggregate. CPU only; reads the shared extracted
-# embeddings. Idempotent (per-word outputs overwrite), so a re-submit after a
-# timeout simply recomputes.
-# Submit with:  oarsub -S ./scripts/analyze.sh
-#     add KDE:  oarsub -S "./scripts/analyze.sh --kde"
-#
+# Stage 3 (CPU): k-NN purity over the corpus + aggregate. Idempotent.
+# Usage:  oarsub -S "./scripts/analyze.sh --model pythia-6.9b"   (add --kde for KDE grids)
 #OAR -q production
 #OAR -l host=1/core=16,walltime=12:0:0
 #OAR -O .analyze.logs

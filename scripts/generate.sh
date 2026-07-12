@@ -1,10 +1,6 @@
 #!/bin/bash
-# Synthesize sentences via the chat API.
-# Submit with:  oarsub -S ./scripts/generate.sh
-#
-# ~100 lemmas x per_synset sentences is a large API run; it is resumable
-# (re-running tops up whichever senses are short), so a walltime timeout is safe
-# -- just re-submit to continue.
+# Stage 1 (CPU): synthesize sentences via the chat API. Resumable (tops up short
+# (sense, style) pairs). Usage:  oarsub -S "./scripts/generate.sh --lemmas nouns_top50"
 #OAR -q production
 #OAR -l host=1/core=8,walltime=48:0:0
 #OAR -O .generate.logs

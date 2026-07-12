@@ -50,6 +50,7 @@ def extract_checkpoint(
     max_length: int,
     device: torch.device,
     cache_dir: str | None = None,
+    trust_remote_code: bool = False,
 ) -> Path:
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -60,12 +61,13 @@ def extract_checkpoint(
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     log.info("Loading %s @ %s on %s", model_name, revision, device)
-    tokenizer = AutoTokenizer.from_pretrained(model_name, revision=revision, cache_dir=cache_dir)
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_name, revision=revision, cache_dir=cache_dir, trust_remote_code=trust_remote_code)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     model = AutoModelForCausalLM.from_pretrained(
-        model_name, revision=revision, dtype=_model_dtype(device), cache_dir=cache_dir
-    )
+        model_name, revision=revision, dtype=_model_dtype(device), cache_dir=cache_dir,
+        trust_remote_code=trust_remote_code)
     model.to(device)
     model.eval()
 
@@ -141,6 +143,7 @@ def extract(cfg: dict, records: "list[dict]", only: "list[str] | None" = None) -
             ex["model"], step, _revision(ex, step, i), records, emb_dir, ex["layers"],
             batch_size=ex["batch_size"], max_length=ex["max_length"],
             device=device, cache_dir=ex["cache_dir"],
+            trust_remote_code=ex.get("trust_remote_code", False),
         )
         if ex["purge_cache"]:
             _purge_model_cache(ex["model"], ex["cache_dir"])

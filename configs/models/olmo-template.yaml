@@ -1,0 +1,10 @@
+# OLMo template (not a default run). The -hf repos have no intermediate
+# checkpoints; the originals do but need trust_remote_code. To use OLMo: copy to
+# configs/models/olmo-7b.yaml, verify branch names via
+# huggingface_hub.list_repo_refs("allenai/OLMo-7B"), then run with --model olmo-7b.
+extract:
+  model: allenai/OLMo-7B           # 32 hidden layers; original repo carries the checkpoints
+  trust_remote_code: true
+  layers: [1, 8, 16, 24, 32]
+  steps:     [1000, 100000, 300000, 557000]
+  revisions: ["step1000-tokens4B", "step100000-tokens442B", "step300000-tokens1327B", "step557000-tokens2464B"]

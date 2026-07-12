@@ -7,8 +7,9 @@ import logging
 import numpy as np
 from matplotlib.colors import LinearSegmentedColormap, to_rgba
 
+from .embeddings import SENSE_PALETTE, displayed_senses, gloss
 from .plots import INK, _style
-from .umapcache import SENSE_PALETTE, displayed_senses, gloss, load_umap
+from .umap_cache import load_umap
 
 log = logging.getLogger(__name__)
 

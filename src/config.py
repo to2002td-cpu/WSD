@@ -6,7 +6,9 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_CONFIG = ROOT / "config.yaml"
+CONFIGS = ROOT / "configs"
+DEFAULT_CONFIG = CONFIGS / "default.yaml"
+MODELS_DIR = CONFIGS / "models"
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -16,18 +18,29 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return out
 
 
-def load_config(path: str | Path | None = None) -> dict:
-    """Load a YAML config, resolving an optional ``base:`` file it inherits from
-    (deep-merged; the child overrides the base). Per-model configs under
-    ``configs/`` carry only what differs from ``config.yaml``."""
-    path = Path(path) if path else DEFAULT_CONFIG
+def _load_yaml(path: Path) -> dict:
+    """Load a YAML config, deep-merging any ``include:`` fragments (relative to the
+    file) first, so the file's own keys win over what it includes."""
     if not path.exists():
         raise SystemExit(f"Config {path} not found.")
     with path.open() as f:
         cfg = yaml.safe_load(f) or {}
-    base = cfg.pop("base", None)
-    if base:
-        return _deep_merge(load_config((path.parent / base).resolve()), cfg)
+    merged: dict = {}
+    for inc in cfg.pop("include", []):
+        merged = _deep_merge(merged, _load_yaml((path.parent / inc).resolve()))
+    return _deep_merge(merged, cfg)
+
+
+def load_config(config: str | Path | None = None, model: str | None = None,
+                lemmas: str | None = None) -> dict:
+    """Compose a run config: the base (``configs/default.yaml`` or ``config``),
+    then the model fragment ``configs/models/<model>.yaml``, then the lemma list."""
+    cfg = _load_yaml(Path(config) if config else DEFAULT_CONFIG)
+    if model:
+        cfg = _deep_merge(cfg, _load_yaml(MODELS_DIR / f"{model}.yaml"))
+    if lemmas:
+        cfg["lemmas_file"] = lemmas if ("/" in lemmas or lemmas.endswith(".txt")) \
+            else f"lemmas/{lemmas}.txt"
     return cfg
 
 
@@ -52,8 +65,8 @@ def store(cfg: dict, p: str | Path) -> Path:
 
 def run_paths(cfg: dict, only: "list[str] | None" = None) -> "tuple[Path, Path]":
     """(dataset_path, emb_dir) for a run. ``only`` scopes the dataset and its
-    embeddings under a tag so subsets never clobber the full corpus; None -> the
-    full corpus. emb_dir is namespaced by model, so models coexist under storage."""
+    embeddings under a tag; None -> the full corpus. emb_dir is namespaced by
+    model, so models coexist under storage."""
     model = cfg["extract"]["model"].split("/")[-1]
     emb_dir = store(cfg, cfg["extract"]["emb_dir"]) / model
     if not only:
