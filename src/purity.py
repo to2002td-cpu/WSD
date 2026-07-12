@@ -240,12 +240,13 @@ def _surface(ks, steps, layers, sweep, chance, out_path):
                         linewidth=0, shade=False)                          # chance floor
         ax.plot_surface(Xk, Yl, Z, cmap=SEQ, vmin=0, vmax=1, rstride=1, cstride=1,
                         edgecolor=(1, 1, 1, 0.25), linewidth=0.25, antialiased=True)
-        ax.set_xticks(range(nk)); ax.set_xticklabels([f"{k:,}" for k in ks],
-                                                     rotation=45, fontsize=5.5, ha="right")
+        xt = list(range(0, nk, 2))                               # every other k, avoids clutter
+        ax.set_xticks(xt); ax.set_xticklabels([f"{ks[i]:,}" for i in xt],
+                                              rotation=40, fontsize=6.5, ha="right")
         ax.set_yticks(range(nL)); ax.set_yticklabels([f"L{l}" for l in layers], fontsize=6.5)
         ax.set_zlim(0, 1); ax.set_zticks([0, 0.5, 1.0]); ax.tick_params(labelsize=7)
-        ax.set_xlabel("k", fontsize=9, labelpad=2, color=INK_SOFT)
-        ax.set_ylabel("layer", fontsize=8, labelpad=4, color=INK_SOFT)
+        ax.set_xlabel("k", fontsize=9.5, labelpad=11, color=INK_SOFT)
+        ax.set_ylabel("layer", fontsize=8, labelpad=6, color=INK_SOFT)
         ax.set_title(f"step {step:,}", color=INK, fontsize=10.5, pad=-2)
         ax.view_init(elev=24, azim=-58)
         ax.set_box_aspect((1.3, 1.0, 0.8))

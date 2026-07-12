@@ -16,12 +16,12 @@ INK_SOFT = "#54534f"   # axis labels
 MUTED = "#8c8a83"      # tick labels
 GRID = "#e7e6df"       # gridlines
 EDGE = "#cdccc3"       # spines / axis frame
-ACCENT = "#c0417f"     # signature hue (magenta)
+ACCENT = "#c2605f"     # signature hue (dusty rose-terracotta)
 
-# Signature sequential colormap (low -> high = deep plum -> magenta -> warm cream).
+# Signature sequential colormap (low -> high = deep plum -> rose -> terracotta -> sand).
 SEQ = LinearSegmentedColormap.from_list("wsd", [
-    (0.00, "#1a1229"), (0.30, "#5e2750"), (0.55, "#b13c76"),
-    (0.78, "#e87a9b"), (1.00, "#f7d6bb")])
+    (0.00, "#241726"), (0.26, "#5c2b45"), (0.52, "#a04a5a"),
+    (0.74, "#d97f5c"), (1.00, "#f0cf9f")])
 
 # Categorical palette for senses (muted, distinct, print-legible).
 SENSE_COLORS = ["#3d5a80", "#e07a5f", "#5b8c5a", "#9b5c8f", "#c9a227",
