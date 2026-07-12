@@ -183,9 +183,7 @@ def purity_corpus(records, emb_dir, words, pos, out_dir, *, max_per_sense: int,
         if not csv_path.exists():
             continue
         steps, layers, kk, sweep, chance = _read_csv(csv_path)
-        _surface(f"“{word}” — sense-cluster purity in embedding space",
-                 "k-nearest-neighbour purity across training · one surface per checkpoint",
-                 kk, steps, layers, sweep, chance, out_dir / f"{word}_purity.png")
+        _surface(kk, steps, layers, sweep, chance, out_dir / f"{word}_purity.png")
         rendered += 1
     _aggregate(out_dir)
     log.info("Purity done: %d figure(s) in %s", rendered, out_dir)
@@ -217,9 +215,10 @@ def _surface_z(ks, layers, sweep, si):
     return np.array([[sweep[k][li, si] for k in ks] for li in range(len(layers))])
 
 
-def _surface(main, subtitle, ks, steps, layers, sweep, chance, out_path):
+def _surface(ks, steps, layers, sweep, chance, out_path):
     """One 3-D purity surface over (k, layer) per checkpoint, shared z ∈ [0,1] with
-    a chance floor. Colour = purity (= height); read across the grid for training."""
+    a chance floor. Colour = purity (= height). No title: the paper caption carries
+    it; only the panel step and the axes/colorbar are labelled."""
     from matplotlib.cm import ScalarMappable
     from matplotlib.colors import Normalize
 
@@ -245,7 +244,7 @@ def _surface(main, subtitle, ks, steps, layers, sweep, chance, out_path):
                                                      rotation=45, fontsize=5.5, ha="right")
         ax.set_yticks(range(nL)); ax.set_yticklabels([f"L{l}" for l in layers], fontsize=6.5)
         ax.set_zlim(0, 1); ax.set_zticks([0, 0.5, 1.0]); ax.tick_params(labelsize=7)
-        ax.set_xlabel("neighbours  k", fontsize=8, labelpad=5, color=INK_SOFT)
+        ax.set_xlabel("k", fontsize=9, labelpad=2, color=INK_SOFT)
         ax.set_ylabel("layer", fontsize=8, labelpad=4, color=INK_SOFT)
         ax.set_title(f"step {step:,}", color=INK, fontsize=10.5, pad=-2)
         ax.view_init(elev=24, azim=-58)
@@ -255,15 +254,13 @@ def _surface(main, subtitle, ks, steps, layers, sweep, chance, out_path):
     for j in range(nS, nrow * ncol):
         fig.add_subplot(nrow, ncol, j + 1).axis("off")
 
-    fig.subplots_adjust(top=0.90, right=0.92)
+    fig.subplots_adjust(top=0.96, right=0.92)
     sm = ScalarMappable(norm=Normalize(0, 1), cmap=SEQ); sm.set_array([])
     cax = fig.add_axes((0.94, 0.30, 0.011, 0.40))
     cbar = fig.colorbar(sm, cax=cax, ticks=np.linspace(0, 1, 6))
     cbar.set_label("k-NN sense purity", fontsize=10, color=INK_SOFT)
     cbar.outline.set_edgecolor(GRID)
     cbar.ax.tick_params(labelsize=8, colors=MUTED)
-    fig.suptitle(main, color=INK, fontsize=15.5, fontweight="bold", y=1.005)
-    fig.text(0.5, 0.958, subtitle, ha="center", color=MUTED, fontsize=10.5)
     save(fig, out_path, dpi=220)
     log.info("Wrote %s", out_path)
 
@@ -306,7 +303,5 @@ def _aggregate(out_dir):
                     w.writerow([s, l, k, len(v), chance[li, si], sweep[k][li, si],
                                 float(np.std(v)) if v else np.nan])
 
-    _surface(f"Top-{len(files)} nouns — mean sense-cluster purity in embedding space",
-             "mean k-nearest-neighbour purity across training · one surface per checkpoint",
-             ks, steps, layers, sweep, float(np.nanmean(chance)), out_dir / "corpus_purity.png")
+    _surface(ks, steps, layers, sweep, float(np.nanmean(chance)), out_dir / "corpus_purity.png")
     log.info("Aggregated %d words -> corpus_purity.png", len(files))

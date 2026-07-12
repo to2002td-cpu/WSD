@@ -8,7 +8,7 @@ import numpy as np
 from matplotlib.colors import LinearSegmentedColormap, to_rgba
 
 from .embeddings import displayed_senses, gloss
-from .plots import EDGE, INK, INK_SOFT, MUTED, SENSE_COLORS, _style, save
+from .plots import EDGE, INK_SOFT, MUTED, SENSE_COLORS, _style, save
 from .umap_cache import load_umap
 
 log = logging.getLogger(__name__)
@@ -83,11 +83,7 @@ def visualize_kde(records, emb_dir, word, pos, fig_dir,
                           label=f"{s} — {gloss(s)}") for s in senses]
     fig.legend(handles=handles, loc="lower center", ncols=min(len(senses), 3),
                fontsize=9, frameon=False, bbox_to_anchor=(0.5, -0.015))
-    fig.suptitle(f"“{word}” ({pos}) — per-sense embedding clouds",
-                 x=0.5, color=INK, fontsize=15, fontweight="bold", y=1.0)
-    fig.text(0.5, 0.978, "2-D UMAP with per-sense KDE density · rows = layers, columns = checkpoints",
-             ha="center", color=MUTED, fontsize=10.5)
-    fig.tight_layout(rect=(0, 0.05, 1, 0.96))
+    fig.tight_layout(rect=(0, 0.05, 1, 0.99))
     save(fig, fig_dir / f"{word}_density.png", dpi=200)
     log.info("Wrote %s", fig_dir / f"{word}_density.png")
 
