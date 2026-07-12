@@ -42,11 +42,10 @@ plot:
   min_per_sense: 6
   npy_cache: false               # no unzipped .npy twins on disk; read straight from the .npz
 
-mmd:                               # kernel two-sample test (sense separation)
-  out_dir: mmd
-  n_perm: 300                      # label permutations for the null p-value
-  max_per_sense: 200               # subsample per sense before each test (power + speed)
-  max_senses: 12                   # cap senses per word (bounds the C(k,2) pairs)
-  alpha: 0.05                      # significance threshold on the permutation p-value
-  standardize: true                # per-dim standardize embeddings (as the UMAP path does)
+similarity:                        # sense-cluster purity (k-NN neighbourhood purity)
+  out_dir: similarity
+  max_per_sense: 1000              # balanced cap per sense (uses all ~1000/sense; kNN is O(n^2))
+  max_senses: 12                   # cap senses per word (bounds the membership matrix)
+  knn_k: 10                        # reference neighbour count (heatmaps + membership matrix)
+  knn_ks: [5, 10, 20, 50, 100, 200, 500, 1000, 2000]   # neighbour counts swept for the purity surface
   seed: 0

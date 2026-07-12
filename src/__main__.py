@@ -37,7 +37,7 @@ def main() -> None:
     for name, helptext in [
         ("density", "per-word UMAP scatter + per-sense KDE grid (PNG)"),
         ("kde", "per-word interactive per-layer KDE slider over checkpoints (HTML)"),
-        ("mmd", "per-word pairwise sense MMD kernel two-sample test + heatmap"),
+        ("similarity", "per-word cosine-similarity sense organization (Δ intra−inter) heatmap"),
     ]:
         sp = sub.add_parser(name, help=helptext)
         sp.add_argument("word", help="target lemma, e.g. 'bank'")
@@ -66,9 +66,9 @@ def main() -> None:
     elif args.cmd == "kde":
         from .kdehtml import kde_slider
         kde_slider(cfg, args.word, args.pos, args.only)
-    elif args.cmd == "mmd":
-        from .mmd import mmd
-        mmd(cfg, args.word, args.pos, args.only)
+    elif args.cmd == "similarity":
+        from .similarity import similarity
+        similarity(cfg, args.word, args.pos, args.only)
 
 
 if __name__ == "__main__":

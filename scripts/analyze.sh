@@ -1,6 +1,6 @@
 #!/bin/bash
-# Sense-separation analysis over the whole corpus: pairwise MMD kernel two-sample
-# test per word, then a corpus-level aggregate heatmap. CPU only; reads the
+# Sense-organization analysis over the whole corpus: cosine intra-vs-inter
+# similarity per word, then a corpus-level aggregate heatmap. CPU only; reads the
 # shared extracted embeddings. Idempotent (per-word outputs overwrite), so a
 # re-submit after a timeout simply recomputes.
 # Submit with:  oarsub -S ./scripts/analyze.sh
@@ -13,7 +13,7 @@
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")/.."
 
-echo "OAR job ${OAR_JOB_ID:-?} on $(hostname) -- analyze (MMD, CPU)"
+echo "OAR job ${OAR_JOB_ID:-?} on $(hostname) -- analyze (cosine similarity, CPU)"
 
 if ! command -v uv >/dev/null 2>&1; then
   export PATH="$HOME/.local/bin:$PATH"

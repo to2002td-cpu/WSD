@@ -1,11 +1,12 @@
-"""Run the MMD sense-separation analysis over every lemma in the corpus.
+"""Run the cosine-similarity sense-organization analysis over the whole corpus.
 
-Loads the (full-corpus) dataset once, then for each lemma in the configured
-``lemmas_file`` runs the pairwise sense MMD kernel two-sample test and writes its
-per-word CSVs + heatmap, finally aggregating all words into a corpus-level
-heatmap. Monosemous words (no sense pair to test) are skipped.
+Loads the (full-corpus) dataset once, then for every lemma in the configured
+``lemmas_file`` measures, per (checkpoint, layer), how much more similar
+same-sense occurrences are than different-sense ones (intra vs inter cosine
+similarity, Δ = intra − inter, and the ratio Q). Writes each word's CSVs +
+figures and a corpus-level aggregate heatmap. Monosemous words are skipped.
 
-    uv run --extra plot python scripts/analyze_all.py            # MMD for all words
+    uv run --extra plot python scripts/analyze_all.py            # similarity for all words
     uv run --extra plot python scripts/analyze_all.py --kde      # also KDE PNG + slider HTML
 
 Reads the same paths the pipeline wrote (``run_paths`` with no ``--only``), so
@@ -24,8 +25,10 @@ sys.path.insert(0, str(ROOT))
 
 from src.config import load_config, resolve, run_paths, store   # noqa: E402
 from src.dataset import build_dataset                           # noqa: E402
-from src.mmd import mmd_corpus                                  # noqa: E402
+from src.similarity import similarity_corpus                    # noqa: E402
 from src.synsets import read_lemmas                             # noqa: E402
+
+log = logging.getLogger(__name__)
 
 
 def main() -> None:
@@ -36,21 +39,21 @@ def main() -> None:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     cfg = load_config()
-    m, p = cfg["mmd"], cfg["plot"]
+    m, p = cfg["similarity"], cfg["plot"]
     lemmas = read_lemmas(resolve(cfg["lemmas_file"]))
     log.info("Analysing %d lemmas (pos=%s)", len(lemmas), args.pos)
 
     records = build_dataset(cfg, None)                          # full corpus, loaded once
     _, emb_dir = run_paths(cfg, None)
     cache_dir = (emb_dir / "_npy_cache") if p["npy_cache"] else None
-    mmd_out = store(cfg, m["out_dir"])
+    sim_out = store(cfg, m["out_dir"])
 
-    # One pass over the checkpoints tests every word (each .npz loaded once).
-    mmd_corpus(
-        records, emb_dir, lemmas, args.pos, mmd_out,
-        n_perm=m["n_perm"], max_per_sense=m["max_per_sense"], alpha=m["alpha"],
-        max_senses=m["max_senses"], standardize=m["standardize"],
-        min_per_sense=p["min_per_sense"], cache_dir=cache_dir, seed=m["seed"],
+    # One pass over the checkpoints scores every word (each .npz loaded once).
+    similarity_corpus(
+        records, emb_dir, lemmas, args.pos, sim_out,
+        max_per_sense=m["max_per_sense"], max_senses=m["max_senses"],
+        knn_k=m["knn_k"], knn_ks=m["knn_ks"], min_per_sense=p["min_per_sense"],
+        cache_dir=cache_dir, seed=m["seed"],
     )
 
     if args.kde:                                                # optional, per-word (needs UMAP)
@@ -67,10 +70,8 @@ def main() -> None:
             except SystemExit as e:
                 log.warning("skip KDE %s: %s", word, e)
 
-    log.info("Analysis done -> %s", mmd_out)
+    log.info("Analysis done -> %s", sim_out)
 
-
-log = logging.getLogger(__name__)
 
 if __name__ == "__main__":
     main()
