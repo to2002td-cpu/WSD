@@ -212,7 +212,8 @@ def purity(cfg: dict, word: str, pos: str | None, only: "list[str] | None" = Non
 # --------------------------------------------------------------------------- #
 
 def _surface_z(ks, layers, sweep, si):
-    return np.array([[sweep[k][li, si] for k in ks] for li in range(len(layers))])
+    """purity[k, layer] grid for one checkpoint (rows = k, cols = layer)."""
+    return np.array([[sweep[k][li, si] for li in range(len(layers))] for k in ks])
 
 
 def _surface(ks, steps, layers, sweep, chance, out_path):
@@ -228,28 +229,27 @@ def _surface(ks, steps, layers, sweep, chance, out_path):
     import matplotlib.pyplot as plt
 
     nk, nL, nS = len(ks), len(layers), len(steps)
-    Xk, Yl = np.meshgrid(np.arange(nk), np.arange(nL))
+    Xl, Yk = np.meshgrid(np.arange(nL), np.arange(nk))           # X = layer, Y = k
     ncol = 5
     nrow = int(np.ceil(nS / ncol))
 
     fig = plt.figure(figsize=(3.5 * ncol, 3.7 * nrow))
     for si, step in enumerate(steps):
         ax = fig.add_subplot(nrow, ncol, si + 1, projection="3d")
-        Z = _surface_z(ks, layers, sweep, si)
-        ax.plot_surface(Xk, Yl, np.full_like(Z, chance), color=GRID, alpha=0.35,
+        Z = _surface_z(ks, layers, sweep, si)                    # (nk, nL)
+        ax.plot_surface(Xl, Yk, np.full_like(Z, chance), color=GRID, alpha=0.35,
                         linewidth=0, shade=False)                          # chance floor
-        ax.plot_surface(Xk, Yl, Z, cmap=SEQ, vmin=0, vmax=1, rstride=1, cstride=1,
+        ax.plot_surface(Xl, Yk, Z, cmap=SEQ, vmin=0, vmax=1, rstride=1, cstride=1,
                         edgecolor=(1, 1, 1, 0.25), linewidth=0.25, antialiased=True)
-        xt = list(range(0, nk, 2))                               # every other k, avoids clutter
-        ax.set_xticks(xt); ax.set_xticklabels([f"{ks[i]:,}" for i in xt],
-                                              rotation=40, fontsize=6.5, ha="right")
-        ax.set_yticks(range(nL)); ax.set_yticklabels([f"L{l}" for l in layers], fontsize=6.5)
+        ax.set_xticks(range(nL)); ax.set_xticklabels([f"L{l}" for l in layers], fontsize=6.5)
+        yt = list(range(0, nk, 2))                               # every other k, avoids clutter
+        ax.set_yticks(yt); ax.set_yticklabels([f"{ks[i]:,}" for i in yt], fontsize=6.5)
         ax.set_zlim(0, 1); ax.set_zticks([0, 0.5, 1.0]); ax.tick_params(labelsize=7)
-        ax.set_xlabel("k", fontsize=9.5, labelpad=11, color=INK_SOFT)
-        ax.set_ylabel("layer", fontsize=8, labelpad=6, color=INK_SOFT)
+        ax.set_xlabel("layer", fontsize=9, labelpad=6, color=INK_SOFT)
+        ax.set_ylabel("k", fontsize=9.5, labelpad=8, color=INK_SOFT)
         ax.set_title(f"step {step:,}", color=INK, fontsize=10.5, pad=-2)
-        ax.view_init(elev=24, azim=-58)
-        ax.set_box_aspect((1.3, 1.0, 0.8))
+        ax.view_init(elev=26, azim=-52)
+        ax.set_box_aspect((1.0, 1.55, 0.85))
         style_axes3d(ax)
 
     for j in range(nS, nrow * ncol):

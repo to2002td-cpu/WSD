@@ -1,84 +1,242 @@
-"""Shared figure identity. Edit the palette here to restyle every figure at once.
 
-Every plot goes through ``_style()`` (global rcParams), draws sequential data with
-``SEQ`` and categorical senses with ``SENSE_COLORS``, and is written with ``save``.
-"""
+
 
 from __future__ import annotations
 
 import matplotlib as mpl
 from matplotlib.colors import LinearSegmentedColormap
+from cycler import cycler
 
-# --- Paper visual identity -------------------------------------------------- #
-PAPER = "#fcfcfa"      # background (warm near-white)
-INK = "#181817"        # titles, primary lines
-INK_SOFT = "#54534f"   # axis labels
-MUTED = "#8c8a83"      # tick labels
-GRID = "#e7e6df"       # gridlines
-EDGE = "#cdccc3"       # spines / axis frame
-ACCENT = "#c2605f"     # signature hue (dusty rose-terracotta)
 
-# Signature sequential colormap (low -> high = deep plum -> rose -> terracotta -> sand).
-SEQ = LinearSegmentedColormap.from_list("wsd", [
-    (0.00, "#241726"), (0.26, "#5c2b45"), (0.52, "#a04a5a"),
-    (0.74, "#d97f5c"), (1.00, "#f0cf9f")])
+# ============================================================================
+# Paper identity
+# ============================================================================
 
-# Categorical palette for senses (muted, distinct, print-legible).
-SENSE_COLORS = ["#3d5a80", "#e07a5f", "#5b8c5a", "#9b5c8f", "#c9a227",
-                "#3a9188", "#8a6d3b", "#c98a9a", "#6b7089", "#98a869"]
+# Neutral white background
+PAPER = "#FFFFFF"
 
+# Typography
+INK = "#1A1A1A"
+INK_SOFT = "#3F4752"
+MUTED = "#737A84"
+
+# Structure
+GRID = "#ECEEF2"
+EDGE = "#B8BEC8"
+
+# Signature accent
+#
+# Deep desaturated blue that gives every figure a recognizable identity.
+ACCENT = "#2D5DA8"
+
+
+# ============================================================================
+# Sequential colormap
+# ============================================================================
+
+# Custom perceptually-smooth map
+#
+# midnight
+#      ↓
+# royal blue
+#      ↓
+# teal
+#      ↓
+# sage
+#      ↓
+# warm sand
+#
+# Distinctive enough to become recognizable across the paper while remaining
+# suitable for scientific visualization.
+
+SEQ = LinearSegmentedColormap.from_list(
+    "paper_seq",
+    [
+        (0.00, "#1F2940"),
+        (0.20, "#2D5DA8"),
+        (0.45, "#3C8DAD"),
+        (0.72, "#73B89E"),
+        (1.00, "#F3E9C9"),
+    ],
+)
+
+
+# ============================================================================
+# Categorical palette
+# ============================================================================
+
+# Based on Okabe-Ito, lightly tuned so the overall paper keeps a coherent
+# blue-centered identity.
+
+SENSE_COLORS = [
+    "#2D5DA8",  # signature blue
+    "#E69F00",  # orange
+    "#009E73",  # green
+    "#CC79A7",  # purple
+    "#D55E00",  # vermillion
+    "#56B4E9",  # sky
+    "#7A9E3A",  # olive
+    "#7A6FBE",  # indigo
+    "#8C564B",  # brown
+    "#666666",  # grey
+]
+
+
+# ============================================================================
+# Global style
+# ============================================================================
 
 def _style() -> None:
+    """Apply the global paper style."""
+
     mpl.rcParams.update({
+
+        # ------------------------------------------------------------------
+        # Figure
+        # ------------------------------------------------------------------
+
         "figure.facecolor": PAPER,
         "axes.facecolor": PAPER,
         "savefig.facecolor": PAPER,
-        "savefig.dpi": 300,
+
+        "figure.dpi": 150,
+        "savefig.dpi": 400,
         "savefig.bbox": "tight",
-        "figure.dpi": 120,
-        "pdf.fonttype": 42,           # editable text in vector PDFs
+
+        "pdf.fonttype": 42,
         "ps.fonttype": 42,
-        "font.family": "serif",
-        "font.serif": ["DejaVu Serif", "Times New Roman", "Times", "STIXGeneral"],
-        "mathtext.fontset": "dejavuserif",
-        "font.size": 11,
+
+        # ------------------------------------------------------------------
+        # Typography
+        # ------------------------------------------------------------------
+
+        "font.family": "sans-serif",
+        "font.sans-serif": [
+            "Arial",
+            "Helvetica",
+            "DejaVu Sans",
+        ],
+
+        "mathtext.fontset": "dejavusans",
+
+        "font.size": 12,
+
         "text.color": INK,
-        "axes.titlesize": 12.5,
+
+        "axes.titlesize": 13,
+        "axes.titleweight": "semibold",
         "axes.titlecolor": INK,
-        "axes.labelsize": 11,
+
+        "axes.labelsize": 12,
         "axes.labelcolor": INK_SOFT,
+
+        # ------------------------------------------------------------------
+        # Axes
+        # ------------------------------------------------------------------
+
         "axes.edgecolor": EDGE,
-        "axes.linewidth": 0.8,
+        "axes.linewidth": 1.0,
+
         "axes.spines.top": False,
         "axes.spines.right": False,
+
         "axes.axisbelow": True,
+
+        # ------------------------------------------------------------------
+        # Grid
+        # ------------------------------------------------------------------
+
         "axes.grid": True,
+
         "grid.color": GRID,
         "grid.linewidth": 0.6,
-        "grid.alpha": 0.8,
+        "grid.alpha": 0.65,
+
+        # ------------------------------------------------------------------
+        # Ticks
+        # ------------------------------------------------------------------
+
         "xtick.color": MUTED,
         "ytick.color": MUTED,
-        "xtick.labelsize": 9.5,
-        "ytick.labelsize": 9.5,
+
+        "xtick.labelsize": 10.5,
+        "ytick.labelsize": 10.5,
+
         "xtick.direction": "out",
         "ytick.direction": "out",
-        "legend.fontsize": 9,
+
+        "xtick.major.width": 0.8,
+        "ytick.major.width": 0.8,
+
+        # ------------------------------------------------------------------
+        # Lines
+        # ------------------------------------------------------------------
+
+        "lines.linewidth": 2.2,
+        "lines.markersize": 6,
+
+        # ------------------------------------------------------------------
+        # Legends
+        # ------------------------------------------------------------------
+
         "legend.frameon": False,
-        "lines.linewidth": 1.8,
+        "legend.fontsize": 10,
+
+        "legend.handlelength": 1.8,
+        "legend.handletextpad": 0.5,
+        "legend.borderaxespad": 0.4,
+
+        # ------------------------------------------------------------------
+        # Default color cycle
+        # ------------------------------------------------------------------
+
+        "axes.prop_cycle": cycler(color=SENSE_COLORS),
     })
 
 
+# ============================================================================
+# 3D styling
+# ============================================================================
+
 def style_axes3d(ax) -> None:
-    """Elegant panes/grid for a 3-D axes: faint paper walls, hairline grid."""
+    """
+    Make 3D plots visually consistent with the paper style.
+    """
+
     for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
+
         axis.pane.set_facecolor(PAPER)
         axis.pane.set_edgecolor(GRID)
-        axis.pane.set_alpha(1.0)
-        axis._axinfo["grid"].update(color=GRID, linewidth=0.5)
+        axis.pane.set_alpha(0.06)
+
+        axis._axinfo["grid"].update(
+            color=GRID,
+            linewidth=0.5,
+        )
+
     ax.tick_params(colors=MUTED)
 
 
-def save(fig, path, dpi: int = 300) -> None:
-    fig.savefig(path, dpi=dpi, bbox_inches="tight", facecolor=PAPER)
+# ============================================================================
+# Saving
+# ============================================================================
+
+def save(fig, path, dpi: int = 400) -> None:
+    """
+    Save a publication-quality figure.
+    """
+
+    fig.savefig(
+        path,
+        dpi=dpi,
+        bbox_inches="tight",
+        facecolor=PAPER,
+    )
+
     import matplotlib.pyplot as plt
+
     plt.close(fig)
+
+
+# Apply the style on import.
+_style()
