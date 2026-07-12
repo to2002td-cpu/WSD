@@ -3,7 +3,7 @@
 # one succeeds (OAR dependency -a), so a reservation is never held while an
 # earlier stage runs:
 #
-#   generate (CPU, API)  ->  extract (GPU)  ->  analyze (CPU, MMD + aggregate)
+#   generate (CPU, API)  ->  extract (GPU)  ->  analyze (CPU, purity + aggregate)
 #
 #   ./scripts/submit.sh            # all three, chained
 #   ./scripts/submit.sh generate   # only stage 1

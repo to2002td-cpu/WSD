@@ -1,17 +1,15 @@
+# Python
 __pycache__/
 *.py[cod]
 .venv/
-data/api.txt
-data/generated
-data/synsets.json
-data/datasets
-data/dataset.jsonl
-data/embeddings
-data/figures
-# local run outputs / local embeddings (real outputs live under storage_root)
-/figures
-/mmd
-/data/Pythia-6.9B
+
+# All runtime data & outputs (generated corpus, embeddings, figures, purity CSVs,
+# secrets). Real outputs live under storage_root ($WSD_STORAGE_ROOT); the local
+# data/ mirror is never committed.
+/data/
+/figures/
+
+# OAR job logs & macOS cruft
 .*.logs
 .*.errors
-*__pycache__*
+.DS_Store

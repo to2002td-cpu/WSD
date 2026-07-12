@@ -1,12 +1,11 @@
-"""Run the cosine-similarity sense-organization analysis over the whole corpus.
+"""Run the sense-cluster purity analysis over the whole corpus.
 
 Loads the (full-corpus) dataset once, then for every lemma in the configured
-``lemmas_file`` measures, per (checkpoint, layer), how much more similar
-same-sense occurrences are than different-sense ones (intra vs inter cosine
-similarity, Δ = intra − inter, and the ratio Q). Writes each word's CSVs +
-figures and a corpus-level aggregate heatmap. Monosemous words are skipped.
+``lemmas_file`` measures k-NN neighbourhood purity per (checkpoint, layer, k) and
+writes each word's purity CSV + 3-D surface, plus a corpus-level aggregate.
+Monosemous words are skipped.
 
-    uv run --extra plot python scripts/analyze_all.py            # similarity for all words
+    uv run --extra plot python scripts/analyze_all.py            # purity for all words
     uv run --extra plot python scripts/analyze_all.py --kde      # also KDE PNG + slider HTML
 
 Reads the same paths the pipeline wrote (``run_paths`` with no ``--only``), so
@@ -52,7 +51,7 @@ def main() -> None:
     similarity_corpus(
         records, emb_dir, lemmas, args.pos, sim_out,
         max_per_sense=m["max_per_sense"], max_senses=m["max_senses"],
-        knn_k=m["knn_k"], knn_ks=m["knn_ks"], min_per_sense=p["min_per_sense"],
+        knn_ks=m["knn_ks"], min_per_sense=p["min_per_sense"],
         cache_dir=cache_dir, seed=m["seed"],
     )
 

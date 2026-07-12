@@ -1,13 +1,13 @@
 storage_root: /home/tderrien/WSD/data
 
-lemmas_file: nouns_top50.txt    # top-50 nouns by frequency (limited run for now)
+lemmas_file: lemmas/nouns_top50.txt   # top-50 nouns by frequency (the study set)
 synsets_cache: synsets.json
 synsets_pos: [n]                # restrict studied senses to nouns (null = all content POS)
 
 generate:
   api_url: https://ragarenn.eskemm-numerique.fr/sso/ch@t/api/chat/completions
   api_key_file: data/api.txt
-  styles_file: data/styles.json
+  styles_file: prompts/styles.json
   prompt_file: prompts/generate.txt
   model: gemma-4-31b
   max_tokens: 2048
@@ -25,10 +25,9 @@ dataset:
 
 extract:
   model: EleutherAI/pythia-6.9b
-  # Pythia checkpoints are log-spaced early (powers of two: ...128, 256, 512),
-  # then every 1000. There is no step250/step500 revision -> 256/512 are the
-  # nearest real checkpoints to the requested 250/500.
-  steps: [0, 256, 512, 1000, 8000, 16000, 32000, 64000, 128000, 143000]
+  # Pythia checkpoints: step0, powers of two up to 512, then every 1000. Every
+  # value below is a real revision (512 is a power of two; the rest multiples of 1000).
+  steps: [0, 512, 1000, 5000, 20000, 50000, 100000, 143000]
   layers: [1, 8, 16, 24, 32]
   batch_size: 128
   max_length: 512
@@ -45,7 +44,6 @@ plot:
 similarity:                        # sense-cluster purity (k-NN neighbourhood purity)
   out_dir: similarity
   max_per_sense: 1000              # balanced cap per sense (uses all ~1000/sense; kNN is O(n^2))
-  max_senses: 12                   # cap senses per word (bounds the membership matrix)
-  knn_k: 10                        # reference neighbour count (heatmaps + membership matrix)
-  knn_ks: [5, 10, 20, 50, 100, 200, 500, 1000, 2000]   # neighbour counts swept for the purity surface
+  max_senses: 12                   # cap senses per word
+  knn_ks: [5, 10, 20, 50, 100, 200, 500, 1000, 2000]   # neighbour counts for the purity surface
   seed: 0

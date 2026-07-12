@@ -1,7 +1,0 @@
-# Lemmas to study, one per line. All WordNet synsets (every POS) are used.
-bank
-virus
-plant
-bass
-crane
-spring
