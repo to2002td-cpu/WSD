@@ -183,7 +183,8 @@ def purity_corpus(records, emb_dir, words, pos, out_dir, *, max_per_sense: int,
         if not csv_path.exists():
             continue
         steps, layers, kk, sweep, chance = _read_csv(csv_path)
-        _surface(f"“{word}” — sense-cluster purity (k × layer per checkpoint)",
+        _surface(f"“{word}” — sense-cluster purity in embedding space",
+                 "k-nearest-neighbour purity across training · one surface per checkpoint",
                  kk, steps, layers, sweep, chance, out_dir / f"{word}_purity.png")
         rendered += 1
     _aggregate(out_dir)
@@ -216,20 +217,19 @@ def _surface_z(ks, layers, sweep, si):
     return np.array([[sweep[k][li, si] for k in ks] for li in range(len(layers))])
 
 
-def _surface(title, ks, steps, layers, sweep, chance, out_path):
+def _surface(main, subtitle, ks, steps, layers, sweep, chance, out_path):
     """One 3-D purity surface over (k, layer) per checkpoint, shared z ∈ [0,1] with
     a chance floor. Colour = purity (= height); read across the grid for training."""
     from matplotlib.cm import ScalarMappable
     from matplotlib.colors import Normalize
 
-    from .plots import INK, _style
+    from .plots import GRID, INK, INK_SOFT, MUTED, SEQ, _style, save, style_axes3d
 
     _style()
     import matplotlib.pyplot as plt
 
     nk, nL, nS = len(ks), len(layers), len(steps)
     Xk, Yl = np.meshgrid(np.arange(nk), np.arange(nL))
-    cmap = plt.cm.viridis
     ncol = 5
     nrow = int(np.ceil(nS / ncol))
 
@@ -237,32 +237,34 @@ def _surface(title, ks, steps, layers, sweep, chance, out_path):
     for si, step in enumerate(steps):
         ax = fig.add_subplot(nrow, ncol, si + 1, projection="3d")
         Z = _surface_z(ks, layers, sweep, si)
-        ax.plot_surface(Xk, Yl, np.full_like(Z, chance), color="0.6", alpha=0.12,
-                        linewidth=0, shade=False)
-        ax.plot_surface(Xk, Yl, Z, cmap=cmap, vmin=0, vmax=1, rstride=1, cstride=1,
-                        edgecolor=(0, 0, 0, 0.15), linewidth=0.2, antialiased=True)
+        ax.plot_surface(Xk, Yl, np.full_like(Z, chance), color=GRID, alpha=0.35,
+                        linewidth=0, shade=False)                          # chance floor
+        ax.plot_surface(Xk, Yl, Z, cmap=SEQ, vmin=0, vmax=1, rstride=1, cstride=1,
+                        edgecolor=(1, 1, 1, 0.25), linewidth=0.25, antialiased=True)
         ax.set_xticks(range(nk)); ax.set_xticklabels([f"{k:,}" for k in ks],
                                                      rotation=45, fontsize=5.5, ha="right")
         ax.set_yticks(range(nL)); ax.set_yticklabels([f"L{l}" for l in layers], fontsize=6.5)
         ax.set_zlim(0, 1); ax.set_zticks([0, 0.5, 1.0]); ax.tick_params(labelsize=7)
-        ax.set_xlabel("k", fontsize=8, labelpad=4)
-        ax.set_ylabel("layer", fontsize=8, labelpad=4)
-        ax.set_title(f"step {step:,}", color=INK, fontsize=11, pad=-2)
+        ax.set_xlabel("neighbours  k", fontsize=8, labelpad=5, color=INK_SOFT)
+        ax.set_ylabel("layer", fontsize=8, labelpad=4, color=INK_SOFT)
+        ax.set_title(f"step {step:,}", color=INK, fontsize=10.5, pad=-2)
         ax.view_init(elev=24, azim=-58)
         ax.set_box_aspect((1.3, 1.0, 0.8))
-        for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
-            axis.pane.set_facecolor("white"); axis.pane.set_alpha(0.4)
+        style_axes3d(ax)
 
     for j in range(nS, nrow * ncol):
         fig.add_subplot(nrow, ncol, j + 1).axis("off")
 
-    sm = ScalarMappable(norm=Normalize(0, 1), cmap=cmap); sm.set_array([])
-    cbar = fig.colorbar(sm, ax=fig.axes, ticks=np.linspace(0, 1, 6),
-                        fraction=0.015, pad=0.06, shrink=0.5)
-    cbar.set_label("k-NN sense purity  (surface height)", fontsize=10)
-    fig.suptitle(title, color=INK, fontsize=15, y=1.0)
-    fig.savefig(out_path, dpi=220, bbox_inches="tight")
-    plt.close(fig)
+    fig.subplots_adjust(top=0.90, right=0.92)
+    sm = ScalarMappable(norm=Normalize(0, 1), cmap=SEQ); sm.set_array([])
+    cax = fig.add_axes((0.94, 0.30, 0.011, 0.40))
+    cbar = fig.colorbar(sm, cax=cax, ticks=np.linspace(0, 1, 6))
+    cbar.set_label("k-NN sense purity", fontsize=10, color=INK_SOFT)
+    cbar.outline.set_edgecolor(GRID)
+    cbar.ax.tick_params(labelsize=8, colors=MUTED)
+    fig.suptitle(main, color=INK, fontsize=15.5, fontweight="bold", y=1.005)
+    fig.text(0.5, 0.958, subtitle, ha="center", color=MUTED, fontsize=10.5)
+    save(fig, out_path, dpi=220)
     log.info("Wrote %s", out_path)
 
 
@@ -304,6 +306,7 @@ def _aggregate(out_dir):
                     w.writerow([s, l, k, len(v), chance[li, si], sweep[k][li, si],
                                 float(np.std(v)) if v else np.nan])
 
-    _surface(f"Top-{len(files)} nouns — mean sense-cluster purity (k × layer per checkpoint)",
+    _surface(f"Top-{len(files)} nouns — mean sense-cluster purity in embedding space",
+             "mean k-nearest-neighbour purity across training · one surface per checkpoint",
              ks, steps, layers, sweep, float(np.nanmean(chance)), out_dir / "corpus_purity.png")
     log.info("Aggregated %d words -> corpus_purity.png", len(files))

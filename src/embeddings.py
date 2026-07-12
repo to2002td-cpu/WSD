@@ -11,10 +11,6 @@ import pandas as pd
 
 log = logging.getLogger(__name__)
 
-# Distinct, print-legible categorical palette (Tableau-10 order, faint hues last).
-SENSE_PALETTE = ["#4e79a7", "#f28e2b", "#59a14f", "#e15759", "#b07aa1",
-                 "#76b7b2", "#9c755f", "#ff9da7", "#edc948", "#bab0ac"]
-
 
 def gloss(sense: str, limit: int = 55) -> str:
     try:
