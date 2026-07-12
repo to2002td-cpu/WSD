@@ -6,7 +6,7 @@ writes each word's purity CSV + 3-D surface, plus a corpus-level aggregate.
 Monosemous words are skipped.
 
     uv run --extra plot python scripts/analyze_all.py            # purity for all words
-    uv run --extra plot python scripts/analyze_all.py --kde      # also KDE PNG + slider HTML
+    uv run --extra plot python scripts/analyze_all.py --kde      # also KDE density PNG
 
 Reads the same paths the pipeline wrote (``run_paths`` with no ``--only``), so
 run it after ``extract`` on the shared embeddings.
@@ -33,7 +33,7 @@ log = logging.getLogger(__name__)
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--pos", default="n", help="WordNet POS to analyse (default n)")
-    ap.add_argument("--kde", action="store_true", help="also emit KDE PNG + slider HTML per word")
+    ap.add_argument("--kde", action="store_true", help="also emit the per-word KDE density grid (PNG)")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -55,17 +55,13 @@ def main() -> None:
         cache_dir=cache_dir, seed=m["seed"],
     )
 
-    if args.kde:                                                # optional, per-word (needs UMAP)
+    if args.kde:                                                # optional per-word KDE grid (needs UMAP)
         from src.density import visualize_kde
-        from src.kdehtml import build_kde_html
         fig_dir = store(cfg, p["fig_dir"])
         for word in lemmas:
             try:
                 visualize_kde(records, emb_dir, word, args.pos, fig_dir,
                               cache_dir=cache_dir, min_per_sense=p["min_per_sense"])
-                build_kde_html(records, emb_dir, word, args.pos,
-                               fig_dir / f"{word}_kde_slider.html",
-                               cache_dir=cache_dir, min_per_sense=p["min_per_sense"])
             except SystemExit as e:
                 log.warning("skip KDE %s: %s", word, e)
 

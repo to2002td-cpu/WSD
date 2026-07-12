@@ -21,5 +21,4 @@ plot = [
     "umap-learn>=0.5.7",
     "numba>=0.60",
     "scipy>=1.11",
-    "plotly>=5.20",
 ]

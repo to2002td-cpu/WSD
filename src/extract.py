@@ -1,17 +1,8 @@
-"""
-For every instance (sentence + char span of the target word) and every
-checkpoint, we run the model under inference mode with hidden states on and
-mean-pool the sub-tokens overlapping the target span, at each configured layer.
+"""Stage 2 (GPU): mean-pool the target token's hidden states at each checkpoint.
 
-Output: one compressed .npz per checkpoint at
-``<emb_dir>/<model_name>/step<N>.npz`` containing
-
-    vectors: float16 [n_instances, n_layers, hidden_size]
-    layers:  int     [n_layers]      (which hidden layer each column is)
-    step:    int
-
-Row i corresponds to line i of dataset.jsonl (order is the alignment key).
-Weights are never modified; everything runs under torch.inference_mode().
+One compressed .npz per checkpoint at ``<emb_dir>/<model>/step<N>.npz`` with
+``vectors`` float16 [n_instances, n_layers, hidden], ``layers`` and ``step``.
+Row i aligns with line i of dataset.jsonl. Weights are never modified.
 """
 
 from __future__ import annotations
@@ -44,7 +35,6 @@ def _model_dtype(device: torch.device) -> torch.dtype:
 
 
 def _target_token_indices(offsets, start: int, end: int) -> "list[int]":
-    """Indices of sub-tokens overlapping the char span [start, end)."""
     return [i for i, (s, e) in enumerate(offsets) if s < end and e > start and e > s]
 
 
@@ -52,6 +42,7 @@ def _target_token_indices(offsets, start: int, end: int) -> "list[int]":
 def extract_checkpoint(
     model_name: str,
     step: int,
+    revision: str,
     records: "list[dict]",
     emb_dir: Path,
     layers: "list[int]",
@@ -60,20 +51,16 @@ def extract_checkpoint(
     device: torch.device,
     cache_dir: str | None = None,
 ) -> Path:
-    """Run one checkpoint over all instances and save pooled vectors."""
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    revision = f"step{step}"
-    out_path = emb_dir / f"{revision}.npz"
+    out_path = emb_dir / f"step{step}.npz"
     if out_path.exists():
         log.info("%s already extracted, skipping", out_path)
         return out_path
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     log.info("Loading %s @ %s on %s", model_name, revision, device)
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_name, revision=revision, cache_dir=cache_dir
-    )
+    tokenizer = AutoTokenizer.from_pretrained(model_name, revision=revision, cache_dir=cache_dir)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     model = AutoModelForCausalLM.from_pretrained(
@@ -84,41 +71,30 @@ def extract_checkpoint(
 
     max_layer = model.config.num_hidden_layers
     for layer in layers:
-        if not (1 <= layer <= max_layer):
-            raise ValueError(f"Layer {layer} out of range 1..{max_layer}")
+        if not 1 <= layer <= max_layer:
+            raise ValueError(f"Layer {layer} out of range 1..{max_layer} for {model_name}")
 
-    hidden = model.config.hidden_size
-    vectors = np.zeros((len(records), len(layers), hidden), dtype=np.float16)
-
+    vectors = np.zeros((len(records), len(layers), model.config.hidden_size), dtype=np.float16)
     n_truncated = 0
-    progress = tqdm(
-        range(0, len(records), batch_size),
-        desc=f"  {revision} embeddings", unit="batch", leave=False, dynamic_ncols=True,
-    )
+    progress = tqdm(range(0, len(records), batch_size),
+                    desc=f"  {revision}", unit="batch", leave=False, dynamic_ncols=True)
     for b0 in progress:
-        batch = records[b0 : b0 + batch_size]
-        enc = tokenizer(
-            [r["sentence"] for r in batch],
-            return_tensors="pt", padding=True, truncation=True,
-            max_length=max_length, return_offsets_mapping=True,
-        )
-        offset_mapping = enc.pop("offset_mapping")
+        batch = records[b0:b0 + batch_size]
+        enc = tokenizer([r["sentence"] for r in batch], return_tensors="pt", padding=True,
+                        truncation=True, max_length=max_length, return_offsets_mapping=True)
+        offsets = enc.pop("offset_mapping")
         enc = {k: v.to(device) for k, v in enc.items()}
         out = model(**enc, output_hidden_states=True)
         hs = torch.stack([out.hidden_states[layer] for layer in layers]).float()
         for j, rec in enumerate(batch):
-            idx = _target_token_indices(
-                offset_mapping[j].tolist(), rec["target_start"], rec["target_end"]
-            )
-            if not idx:  # target fell beyond truncation
+            idx = _target_token_indices(offsets[j].tolist(), rec["target_start"], rec["target_end"])
+            if not idx:                                  # target beyond truncation -> row left zero
                 n_truncated += 1
                 continue
-            pooled = hs[:, j, idx, :].mean(dim=1)  # [n_layers, H]
-            vectors[b0 + j] = pooled.cpu().numpy().astype(np.float16)
+            vectors[b0 + j] = hs[:, j, idx, :].mean(dim=1).cpu().numpy().astype(np.float16)
 
     if n_truncated:
-        log.warning("%d/%d targets lost to truncation (rows left as zeros)",
-                    n_truncated, len(records))
+        log.warning("%d/%d targets lost to truncation", n_truncated, len(records))
     np.savez_compressed(out_path, vectors=vectors, step=step, layers=np.array(layers))
     log.info("Saved %s (%s)", out_path, vectors.shape)
 
@@ -132,11 +108,8 @@ def extract_checkpoint(
 
 
 def _purge_model_cache(model_name: str, cache_dir: str | None) -> None:
-    """Delete the HF cache entry (all downloaded revisions) of the model.
-
-    Each Pythia-6.9b revision is a full ~14 GB snapshot; on a cluster we drop
-    the weights as soon as a checkpoint's .npz is written.
-    """
+    """Drop the model's HF cache (each revision is a full snapshot) so disk stays
+    bounded to one checkpoint on the cluster."""
     import shutil
 
     from huggingface_hub.constants import HF_HUB_CACHE
@@ -147,21 +120,28 @@ def _purge_model_cache(model_name: str, cache_dir: str | None) -> None:
         log.info("Purged HF cache %s", target)
 
 
+def _revision(ex: dict, step: int, i: int) -> str:
+    """HF revision for a checkpoint. Pythia uses ``step{N}`` (the default format);
+    models whose branch names embed extra fields (e.g. OLMo token counts) list
+    them explicitly in ``extract.revisions`` parallel to ``steps``."""
+    revisions = ex.get("revisions")
+    if revisions:
+        return revisions[i]
+    return ex.get("revision_format", "step{step}").format(step=step)
+
+
 def extract(cfg: dict, records: "list[dict]", only: "list[str] | None" = None) -> Path:
-    """Extract every configured checkpoint over the dataset."""
     from .config import run_paths
 
     ex = cfg["extract"]
-    model_name = ex["model"]
     _, emb_dir = run_paths(cfg, only)
     device = pick_device(ex["device"])
-
-    for step in tqdm(ex["steps"], desc="checkpoints", unit="ckpt", dynamic_ncols=True):
+    for i, step in enumerate(tqdm(ex["steps"], desc="checkpoints", unit="ckpt", dynamic_ncols=True)):
         extract_checkpoint(
-            model_name, step, records, emb_dir, ex["layers"],
+            ex["model"], step, _revision(ex, step, i), records, emb_dir, ex["layers"],
             batch_size=ex["batch_size"], max_length=ex["max_length"],
             device=device, cache_dir=ex["cache_dir"],
         )
         if ex["purge_cache"]:
-            _purge_model_cache(model_name, ex["cache_dir"])
+            _purge_model_cache(ex["model"], ex["cache_dir"])
     return emb_dir

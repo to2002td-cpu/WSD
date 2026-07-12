@@ -1,9 +1,4 @@
-"""Per-word UMAP scatter with a per-sense KDE overlay (layer × checkpoint grid).
-
-Each panel scatters the occurrences coloured by sense and lays a translucent
-Gaussian-KDE density of each sense on top, so class regions read as coloured
-"clouds" even where points overplot. Reads the shared UMAP cache.
-"""
+"""Per-word UMAP scatter + per-sense Gaussian-KDE overlay (layer × checkpoint grid)."""
 
 from __future__ import annotations
 

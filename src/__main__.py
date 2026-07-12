@@ -5,11 +5,10 @@
     python -m src extract                     # stage 2 (GPU): pool hidden states
     python -m src similarity LEMMA [--pos n]  # stage 3 (CPU): k-NN purity 3-D surface
     python -m src density    LEMMA [--pos n]  # per-word per-sense KDE grid (PNG)
-    python -m src kde        LEMMA [--pos n]  # interactive per-layer KDE slider (HTML)
 
-Use --config to point at a different YAML. Every stage is resumable: existing
-outputs are reused (generation tops up short senses, extraction skips
-checkpoints already on disk, the dataset is built once).
+Use --config to point at a per-model YAML (configs/*.yaml). Every stage is
+resumable: existing outputs are reused (generation tops up short (sense, style)
+pairs, extraction skips checkpoints on disk, the dataset is built once).
 """
 
 from __future__ import annotations
@@ -37,7 +36,6 @@ def main() -> None:
 
     for name, helptext in [
         ("density", "per-word UMAP scatter + per-sense KDE grid (PNG)"),
-        ("kde", "per-word interactive per-layer KDE slider over checkpoints (HTML)"),
         ("similarity", "per-word k-NN sense-cluster purity 3-D surface (k × layer per checkpoint)"),
     ]:
         sp = sub.add_parser(name, help=helptext)
@@ -64,9 +62,6 @@ def main() -> None:
     elif args.cmd == "density":
         from .density import density
         density(cfg, args.word, args.pos, args.only)
-    elif args.cmd == "kde":
-        from .kdehtml import kde_slider
-        kde_slider(cfg, args.word, args.pos, args.only)
     elif args.cmd == "similarity":
         from .similarity import similarity
         similarity(cfg, args.word, args.pos, args.only)

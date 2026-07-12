@@ -17,12 +17,9 @@ def _pos_from_sense(sense: str) -> str:
 
 
 def _locate_target(sentence: str, word: str, pos: str | None = None):
-    """Char span of the target word in `sentence` -> (start, end, surface).
-
-    Tries an exact whole-word match, then an inflected form sharing the lemma's
-    stem ("virus" -> "viruses"), then WordNet morphology for irregular forms
-    ("foot" -> "feet"). Returns None if the word is absent.
-    """
+    """Char span (start, end, surface) of the target word: exact whole-word, then
+    a stem-sharing inflection ("virus"->"viruses"), then WordNet morphology for
+    irregulars ("foot"->"feet"). None if absent."""
     esc = re.escape(word)
     for pattern in (rf"\b{esc}\b", rf"\b{esc}[a-zA-Z]*\b"):
         m = re.search(pattern, sentence, re.IGNORECASE)
@@ -55,9 +52,8 @@ def _read_generated(gen_dir: Path, only: "list[str] | None" = None) -> "list[dic
 
 
 def build_dataset(cfg: dict, only: "list[str] | None" = None) -> "list[dict]":
-    """Build (or reuse) the extraction dataset from the generated sentences.
-
-    `only` restricts it to the given generated stems (e.g. ['bank.n'])."""
+    """Build (or reuse) the extraction dataset from the generated sentences,
+    locating each target span. ``only`` restricts to given stems (e.g. ['bank.n'])."""
     ds = cfg["dataset"]
     from .config import run_paths, store
 

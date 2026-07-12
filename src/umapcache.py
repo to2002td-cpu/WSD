@@ -1,11 +1,5 @@
-"""Shared embedding loaders and a UMAP disk cache.
-
-The 2-D UMAP is computed once over the full valid population of a (word, pos)
-and cached under ``<emb_dir>/_umap_cache/<word>.<pos>/step<S>.layer<L>.npy`` — so
-every visualization reads coordinates instead of recomputing 60 UMAP fits.
-Display filters (which senses/styles to show) are applied afterwards on the
-cached coordinates, which also lets the interactive tool toggle them for free.
-"""
+"""Shared embedding loaders and a per-(word, layer, step) 2-D UMAP disk cache
+(``<emb_dir>/_umap_cache/...``), computed once and reused by the KDE figures."""
 
 from __future__ import annotations
 

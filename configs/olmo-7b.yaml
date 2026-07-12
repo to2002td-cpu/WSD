@@ -1,0 +1,8 @@
+base: ../config.yaml
+extract:
+  model: allenai/OLMo-7B-hf
+  layers: [1, 8, 16, 24, 32]     # OLMo-7B has 32 hidden layers
+  steps: [1000, 100000, 300000, 557000]
+  # OLMo checkpoint branches embed the token count, e.g. "step1000-tokens5B".
+  # List the exact names (huggingface_hub.list_repo_refs) parallel to `steps`:
+  # revisions: ["step1000-tokens5B", "step100000-tokens...", ...]

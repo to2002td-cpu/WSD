@@ -1,0 +1,4 @@
+base: ../config.yaml
+extract:
+  model: EleutherAI/pythia-1.4b
+  layers: [1, 6, 12, 18, 24]     # pythia-1.4b has 24 hidden layers
