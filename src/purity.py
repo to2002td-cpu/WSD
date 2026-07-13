@@ -7,7 +7,7 @@ senses) is the fully-mixed floor. Being local, purity is robust to a sense
 splitting into several clusters; sweeping ``k`` shows how far it reaches.
 
 Compute and plot are separate: purity is written to ``{word}_purity.csv`` and the
-3-D surface is rendered from it, so re-running only re-plots (pass ``force`` to
+heatmap grid is rendered from it, so re-running only re-plots (pass ``force`` to
 recompute the O(n^2) purity).
 """
 
@@ -182,8 +182,8 @@ def purity_corpus(records, emb_dir, words, pos, out_dir, *, max_per_sense: int,
         csv_path = out_dir / f"{word}_purity.csv"
         if not csv_path.exists():
             continue
-        steps, layers, kk, sweep, chance = _read_csv(csv_path)
-        _surface(kk, steps, layers, sweep, chance, out_dir / f"{word}_purity.png")
+        steps, layers, kk, sweep, _ = _read_csv(csv_path)
+        _heatmap_grid(kk, steps, layers, sweep, out_dir / f"{word}_purity.png")
         rendered += 1
     _aggregate(out_dir)
     log.info("Purity done: %d figure(s) in %s", rendered, out_dir)
@@ -208,7 +208,7 @@ def purity(cfg: dict, word: str, pos: str | None, only: "list[str] | None" = Non
 
 
 # --------------------------------------------------------------------------- #
-# 3-D purity surface (one panel per checkpoint)                                #
+# Purity heatmap grid (one panel per checkpoint)                               #
 # --------------------------------------------------------------------------- #
 
 def _surface_z(ks, layers, sweep, si):
@@ -216,59 +216,73 @@ def _surface_z(ks, layers, sweep, si):
     return np.array([[sweep[k][li, si] for k in ks] for li in range(len(layers))])
 
 
-def _surface(ks, steps, layers, sweep, chance, out_path):
-    """One 3-D purity surface over (k, layer) per checkpoint, shared z ∈ [0,1] with
-    a chance floor. Colour = purity (= height). No title: the paper caption carries
-    it; only the panel step and the axes/colorbar are labelled."""
+def _heatmap_grid(ks, steps, layers, sweep, out_path):
+    """Purity heatmaps — one panel per checkpoint, cells = purity(layer, k) on a
+    shared diverging 0..1 scale. No title: the caption carries it."""
     from matplotlib.cm import ScalarMappable
     from matplotlib.colors import Normalize
 
-    from .plots import GRID, INK, INK_SOFT, MUTED, SEQ, _style, save, style_axes3d
+    from .plots import EDGE, GRID, INK_SOFT, MUTED, PURITY_CMAP, WIDE_WIDTH, _style, fmt_step, save
 
     _style()
     import matplotlib.pyplot as plt
 
+    cmap = PURITY_CMAP.copy()
+    cmap.set_bad(GRID)                                          # missing cells recede to grid grey
+    norm = Normalize(0, 1)
+
     nk, nL, nS = len(ks), len(layers), len(steps)
-    Xk, Yl = np.meshgrid(np.arange(nk), np.arange(nL))           # X = k, Y = layer
     ncol = 5
     nrow = int(np.ceil(nS / ncol))
+    xt = list(range(0, nk, 2))                                  # every other k, avoids clutter
 
-    fig = plt.figure(figsize=(3.5 * ncol, 3.7 * nrow))
-    for si, step in enumerate(steps):
-        ax = fig.add_subplot(nrow, ncol, si + 1, projection="3d")
-        Z = _surface_z(ks, layers, sweep, si)                    # (nL, nk)
-        ax.plot_surface(Xk, Yl, np.full_like(Z, chance), color=GRID, alpha=0.35,
-                        linewidth=0, shade=False)                          # chance floor
-        ax.plot_surface(Xk, Yl, Z, cmap=SEQ, vmin=0, vmax=1, rstride=1, cstride=1,
-                        edgecolor=(1, 1, 1, 0.25), linewidth=0.25, antialiased=True)
-        xt = list(range(0, nk, 2))                               # every other k, avoids clutter
-        ax.set_xticks(xt); ax.set_xticklabels([f"{ks[i]:,}" for i in xt],
-                                              rotation=40, fontsize=6.5, ha="right")
-        ax.set_yticks(range(nL)); ax.set_yticklabels([f"L{l}" for l in layers], fontsize=6.5)
-        ax.set_zlim(0, 1); ax.set_zticks([0, 0.5, 1.0]); ax.tick_params(labelsize=7)
-        ax.set_xlabel("k", fontsize=9.5, labelpad=11, color=INK_SOFT)
-        ax.set_ylabel("layer", fontsize=8, labelpad=6, color=INK_SOFT)
-        ax.set_title(f"step {step:,}", color=INK, fontsize=10.5, pad=-2)
-        ax.view_init(elev=24, azim=-58)
-        ax.set_box_aspect((1.3, 1.0, 0.8))
-        style_axes3d(ax)
+    fig, axes = plt.subplots(nrow, ncol, figsize=(WIDE_WIDTH, 1.45 * nrow + 0.35),
+                             squeeze=False)
+    for idx in range(nrow * ncol):
+        ax = axes[idx // ncol][idx % ncol]
+        if idx >= nS:
+            ax.axis("off")
+            continue
+        Z = np.ma.masked_invalid(_surface_z(ks, layers, sweep, idx))   # (nL, nk)
+        ax.imshow(Z, cmap=cmap, norm=norm, origin="lower", aspect="auto",
+                  interpolation="nearest")
 
-    for j in range(nS, nrow * ncol):
-        fig.add_subplot(nrow, ncol, j + 1).axis("off")
+        ax.set_xticks(np.arange(-0.5, nk, 1), minor=True)
+        ax.set_yticks(np.arange(-0.5, nL, 1), minor=True)
+        ax.grid(which="minor", color=GRID, linewidth=0.6)       # hairline grid delineates every cell
+        ax.tick_params(which="both", length=0)
+        for sp in ax.spines.values():
+            sp.set_visible(True); sp.set_edgecolor(EDGE); sp.set_linewidth(0.6)
 
-    fig.subplots_adjust(top=0.96, right=0.92)
-    sm = ScalarMappable(norm=Normalize(0, 1), cmap=SEQ); sm.set_array([])
-    cax = fig.add_axes((0.94, 0.30, 0.011, 0.40))
-    cbar = fig.colorbar(sm, cax=cax, ticks=np.linspace(0, 1, 6))
-    cbar.set_label("k-NN sense purity", fontsize=10, color=INK_SOFT)
-    cbar.outline.set_edgecolor(GRID)
-    cbar.ax.tick_params(labelsize=8, colors=MUTED)
-    save(fig, out_path, dpi=220)
+        is_bottom = idx + ncol >= nS
+        is_left = idx % ncol == 0
+        ax.set_xticks(xt)
+        ax.set_xticklabels([fmt_step(ks[i]) for i in xt], rotation=45, ha="right") if is_bottom \
+            else ax.set_xticklabels([])
+        ax.set_yticks(range(nL))
+        ax.set_yticklabels([str(l) for l in layers]) if is_left else ax.set_yticklabels([])
+        ax.set_title(f"step {fmt_step(steps[idx])}", pad=3, fontsize=7.5, color=MUTED)
+
+    # Meta-axes named once (as in the PCA figure), instead of a per-panel k/layer label.
+    left, right, top, bot = 0.085, 0.9, 0.93, 0.15
+    fig.subplots_adjust(left=left, right=right, top=top, bottom=bot, hspace=0.28, wspace=0.1)
+    fig.text((left + right) / 2, 0.04, "$k$", ha="center", va="center",
+             fontsize=8.5, color=INK_SOFT)
+    fig.text(0.022, (top + bot) / 2, "layer", rotation=90, ha="center", va="center",
+             fontsize=8.5, color=INK_SOFT)
+
+    sm = ScalarMappable(norm=norm, cmap=PURITY_CMAP); sm.set_array([])
+    cax = fig.add_axes((0.915, 0.2, 0.013, 0.6))
+    cbar = fig.colorbar(sm, cax=cax, ticks=[0, 0.25, 0.5, 0.75, 1.0])
+    cbar.set_label("$k$-NN sense purity", color=INK_SOFT)
+    cbar.outline.set_edgecolor(EDGE); cbar.outline.set_linewidth(0.6)
+    cbar.ax.tick_params(labelsize=7, colors=MUTED)
+    save(fig, out_path, dpi=400)
     log.info("Wrote %s", out_path)
 
 
 def _aggregate(out_dir):
-    """Average every ``*_purity.csv`` into corpus-level CSV + 3-D surface."""
+    """Average every ``*_purity.csv`` into corpus-level CSV + heatmap grid."""
     from collections import defaultdict
 
     files = sorted(p for p in out_dir.glob("*_purity.csv") if not p.name.startswith("corpus"))
@@ -305,5 +319,5 @@ def _aggregate(out_dir):
                     w.writerow([s, l, k, len(v), chance[li, si], sweep[k][li, si],
                                 float(np.std(v)) if v else np.nan])
 
-    _surface(ks, steps, layers, sweep, float(np.nanmean(chance)), out_dir / "corpus_purity.png")
+    _heatmap_grid(ks, steps, layers, sweep, out_dir / "corpus_purity.png")
     log.info("Aggregated %d words -> corpus_purity.png", len(files))

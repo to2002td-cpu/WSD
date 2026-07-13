@@ -3,8 +3,8 @@
     python -m src synsets  [--model M] [--lemmas L]
     python -m src generate [--model M] [--lemmas L]       # stage 1 (CPU): synthesize sentences
     python -m src extract   --model M  [--only LEMMA.POS]  # stage 2 (GPU): pool hidden states
-    python -m src purity   WORD --model M [--pos n] [-f]   # stage 3 (CPU): k-NN purity 3-D surface
-    python -m src density  WORD --model M [--pos n]        # per-sense KDE grid (PNG)
+    python -m src purity   WORD --model M [--pos n] [-f]   # stage 3 (CPU): k-NN purity heatmap grid
+    python -m src pca      WORD --model M [--pos n]        # per-condition PCA grid (PDF + PNG)
     python -m src push     [--repo-id ID] [--public]       # push sentences to a HF dataset repo
 
 --model picks configs/models/<M>.yaml, --lemmas picks lemmas/<L>.txt, --config
@@ -36,8 +36,8 @@ def main() -> None:
     e.add_argument("--only", nargs="+", metavar="LEMMA.POS", help="restrict to these generated files")
 
     for name, helptext in [
-        ("density", "per-word UMAP scatter + per-sense KDE grid (PNG)"),
-        ("purity", "per-word k-NN sense-cluster purity 3-D surface (k × layer per checkpoint)"),
+        ("pca", "per-word per-condition PCA grid (layer × checkpoint)"),
+        ("purity", "per-word k-NN sense-cluster purity heatmap grid (k × layer per checkpoint)"),
     ]:
         sp = sub.add_parser(name, parents=[common], help=helptext)
         sp.add_argument("word", help="target lemma, e.g. 'bank'")
@@ -65,9 +65,9 @@ def main() -> None:
         from .dataset import build_dataset
         from .extract import extract
         extract(cfg, build_dataset(cfg, args.only), args.only)
-    elif args.cmd == "density":
-        from .density import density
-        density(cfg, args.word, args.pos, args.only)
+    elif args.cmd == "pca":
+        from .pca import pca
+        pca(cfg, args.word, args.pos, args.only)
     elif args.cmd == "purity":
         from .purity import purity
         purity(cfg, args.word, args.pos, args.only, args.force)
