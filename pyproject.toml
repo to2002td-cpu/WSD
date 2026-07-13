@@ -22,3 +22,8 @@ plot = [
     "numba>=0.60",
     "scipy>=1.11",
 ]
+# logit_lens/ pipeline only: pandas (occ_df / results tables) + the semcor corpus,
+# fetched via nltk.download (already a base dependency).
+logit-lens = [
+    "pandas>=3.0.3",
+]
