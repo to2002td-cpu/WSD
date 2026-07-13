@@ -1,0 +1,65 @@
+# Config for the SemCor logit-lens probe: for each occurrence of a target word's
+# sense, is the word the model's most-likely next token, at each layer x checkpoint?
+# Meant to sit next to the kernel two-sample test in twosampletest.ipynb -- same
+# words, same checkpoints/layers axes -- so "separability" and "predictability" can
+# be correlated point for point.
+
+model: EleutherAI/pythia-6.9b
+revision_format: "step{step}"
+
+# Training axis. Pythia branches are step{N}; below 1000 they're log-spaced
+# (0,1,2,4,8,16,32,64,128,256,512), from 1000 on they're every 1000 steps. 1024 and
+# 4096 were requested but aren't real revisions -- snapped to the nearest actual
+# checkpoint (1000, 4000).
+checkpoints: [0, 8, 16, 64, 256, 1000, 4000, 8000, 16000, 32000, 64000, 128000, 143000]
+
+# Depth axis: 1-indexed hidden layers (pythia-6.9b has 32). Matches
+# configs/extraction.yaml's default in the main WSD pipeline.
+layers: [1, 8, 16, 24, 32]
+
+# --- word / occurrence selection (SemCor) ---
+# Reproduces pythia_wsd_analysis_clean.ipynb's word list exactly (seed 1234), which
+# is what actually built the occ_df.pkl consumed by twosampletest.ipynb and
+# perword_clustering.ipynb (25,976 occurrences over 60 words). Deterministic, so
+# re-running this stage reconstructs the same target words without needing that
+# (inaccessible) pickle. No lemma/POS exclusion and no cap on sense count in the
+# source notebook -- e.g. be::v (15,763 occurrences alone) and adverbs like
+# even::r/now::r/so::r/very::r are legitimately in the word list.
+word_selection:
+  seed: 1234
+  min_occ: 5              # a (word, sense) needs >= this many SemCor occurrences to be "usable"
+  min_senses: 2           # word must have this many usable senses ...
+  max_senses: null        # ... and no upper cap (null = uncapped)
+  words_per_bin: 20
+  # freq_bin(total_occ) cascades top to bottom, like the source notebook's
+  # if/elif/else (total_occ = the word's occurrences across ALL its senses, not
+  # just the usable ones above); the last bin (lo=0) is the catch-all.
+  freq_bins:
+    - [frequent, 200]
+    - [mid, 50]
+    - [rare, 0]
+  exclude_lemmas: []       # kept as a knob but empty by default -- the source
+  exclude_pos: []          # notebook applies no lemma/POS filtering at all
+  word_list_file: null     # optional: path to a plain-text word_id list (one
+                            # "lemma::pos" per line) to use INSTEAD of the algorithmic
+                            # selection above.
+
+# --- extraction ---
+batch_size: 16
+max_length: 512
+device: null                # cuda | mps | cpu (null = auto)
+purge_cache: true            # drop each checkpoint's HF snapshot after use -- keep
+                              # this true, the home quota is ~24GB soft / ~95GB hard
+                              # and one pythia-6.9b revision is ~14GB.
+
+# --- paths ---
+# null -> <repo>/data/logit_lens (git-ignored, on NFS /home -- fine, results here
+# are tens of MB, nowhere near the home quota). The team-storage "logit_extraction"
+# folder (/srv/storage/linkmedia@storage2.rennes.grid5000.fr/gdelicat/logit_extraction)
+# only resolves on Rennes-site nodes -- point $WSD_STORAGE_ROOT there if/when running
+# from Rennes instead of Nancy.
+storage_root: null
+# cache_dir: null -> $TMPDIR or /tmp/wsd_logit_lens_hf_cache -- local node disk on
+# the OAR job, NOT team storage or the NFS home: this is a scratch download area
+# for the ~14GB model snapshot, purged after every checkpoint, not a result.
+cache_dir: null
