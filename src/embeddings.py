@@ -13,13 +13,19 @@ log = logging.getLogger(__name__)
 
 
 def gloss(sense: str, limit: int = 55) -> str:
-    try:
-        from nltk.corpus import wordnet as wn
+    """The sense's WordNet definition, truncated; "" if ``sense`` isn't a real
+    synset id (legend labels should degrade, not crash, on a malformed id)."""
+    from nltk.corpus.reader.wordnet import WordNetError
 
+    from .synsets import ensure_nltk_data
+    ensure_nltk_data()
+    from nltk.corpus import wordnet as wn
+
+    try:
         d = wn.synset(sense).definition()
-        return d if len(d) <= limit else d[: limit - 3] + "..."
-    except Exception:
+    except (WordNetError, ValueError):
         return ""
+    return d if len(d) <= limit else d[: limit - 3] + "..."
 
 
 def load_vectors(npz_path: Path, cache_dir: Path | None):
