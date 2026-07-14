@@ -25,10 +25,11 @@ def _locate_target(sentence: str, word: str, pos: str | None = None):
         m = re.search(pattern, sentence, re.IGNORECASE)
         if m:
             return m.start(), m.end(), m.group(0)
-    try:
-        from nltk.corpus import wordnet as wn
-    except Exception:
-        return None
+
+    from .synsets import ensure_nltk_data
+    ensure_nltk_data()
+    from nltk.corpus import wordnet as wn
+
     for m in re.finditer(r"[A-Za-z]+", sentence):
         base = wn.morphy(m.group(0).lower(), pos) if pos else wn.morphy(m.group(0).lower())
         if base == word:
