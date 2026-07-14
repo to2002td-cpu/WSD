@@ -20,7 +20,8 @@ log = logging.getLogger(__name__)
 CONTENT_POS = {"n", "v", "a", "s", "r"}
 
 
-def _ensure_nltk_data() -> None:
+def ensure_nltk_data() -> None:
+    """Download the WordNet corpora on first use. Safe to call repeatedly."""
     import nltk
 
     for resource, path in [("wordnet", "corpora/wordnet"), ("omw-1.4", "corpora/omw-1.4")]:
@@ -53,7 +54,7 @@ def build_synsets(lemmas: "list[str]", keep_pos: "list[str] | None" = None) -> "
 
     Proper-noun senses are dropped. ``keep_pos`` (e.g. ``["n"]``) restricts to
     those merged parts of speech; ``None`` keeps all content POS."""
-    _ensure_nltk_data()
+    ensure_nltk_data()
     from nltk.corpus import wordnet as wn
 
     keep = set(keep_pos) if keep_pos else None
