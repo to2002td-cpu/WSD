@@ -1,6 +1,6 @@
 #!/bin/bash
 # Stage 3 (CPU): k-NN purity over the corpus + aggregate. Idempotent.
-# Usage:  oarsub -S "./scripts/analyze.sh --model pythia-6.9b"   (add --kde for KDE grids)
+# Usage:  oarsub -S "./scripts/analyze.sh --model pythia-6.9b"   (add --pca for PCA grids)
 #OAR -q production
 #OAR -l host=1/core=16,walltime=12:0:0
 #OAR -O .analyze.logs

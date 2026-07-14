@@ -179,15 +179,25 @@ def _read_csv(path):
 # Drivers                                                                      #
 # --------------------------------------------------------------------------- #
 
+def _subdirs(out_dir):
+    """Self-describing output folders: data (CSVs + margin npz) and one per figure."""
+    sd = {name: out_dir / name for name in ("data", "heatmap", "auc", "pk", "margin")}
+    for p in sd.values():
+        p.mkdir(parents=True, exist_ok=True)
+    return sd
+
+
 def purity_corpus(records, emb_dir, words, pos, out_dir, *, max_per_sense: int,
                   max_senses: int, knn_ks: "list[int]", min_per_sense: int,
                   cache_dir=None, seed: int = 0, force: bool = False):
-    """Purity for many words. Words whose ``{word}_purity.csv`` exists are reused
-    (unless ``force``); the rest are computed in one checkpoint pass. Every word is
-    then rendered from its CSV, and the corpus aggregate is refreshed."""
+    """Purity for many words. Words whose ``data/{word}_purity.csv`` exists are
+    reused (unless ``force``); the rest are computed in one checkpoint pass. Every
+    word is then rendered from its CSV, and the corpus aggregate is refreshed.
+    Outputs land in ``out_dir/{data,heatmap,auc,pk,margin}/``."""
     out_dir.mkdir(parents=True, exist_ok=True)
+    sd = _subdirs(out_dir)
     ks = sorted(set(knn_ks))
-    todo = [w for w in words if force or not (out_dir / f"{w}_purity.csv").exists()]
+    todo = [w for w in words if force or not (sd["data"] / f"{w}_purity.csv").exists()]
 
     if todo:
         npz_files = sorted_checkpoints(emb_dir)
@@ -208,27 +218,27 @@ def purity_corpus(records, emb_dir, words, pos, out_dir, *, max_per_sense: int,
             steps, layers = _compute(npz_files, plans, ks, max_per_sense, cache_dir, seed)
             rng_sub = np.random.default_rng(seed)
             for word, plan in plans.items():
-                _write_csv(out_dir / f"{word}_purity.csv", steps, layers, ks,
+                _write_csv(sd["data"] / f"{word}_purity.csv", steps, layers, ks,
                            plan["sweep"], 1.0 / len(plan["senses"]), len(plan["senses"]))
-                _save_margins(out_dir / f"{word}_margin.npz", steps, layers, plan["margins"], rng_sub)
+                _save_margins(sd["data"] / f"{word}_margin.npz", steps, layers, plan["margins"], rng_sub)
 
     rendered = 0
     for word in words:
-        csv_path = out_dir / f"{word}_purity.csv"
+        csv_path = sd["data"] / f"{word}_purity.csv"
         if not csv_path.exists():
             continue
         steps, layers, kk, sweep, chance = _read_csv(csv_path)
-        _heatmap_grid(kk, steps, layers, sweep, out_dir / f"{word}_purity.png")
-        _auc_heatmap(kk, steps, layers, sweep, out_dir / f"{word}_purity_auc.png")
-        _pk_curves(kk, steps, layers, sweep, chance, out_dir / f"{word}_purity_pk.png")
-        margin_path = out_dir / f"{word}_margin.npz"
+        _heatmap_grid(kk, steps, layers, sweep, sd["heatmap"] / f"{word}_purity.png")
+        _auc_heatmap(kk, steps, layers, sweep, sd["auc"] / f"{word}_purity_auc.png")
+        _pk_curves(kk, steps, layers, sweep, chance, sd["pk"] / f"{word}_purity_pk.png")
+        margin_path = sd["data"] / f"{word}_margin.npz"
         if margin_path.exists():
             d = np.load(margin_path)
             _margin_ridgeline(d["margins"], list(d["steps"]), list(d["layers"]),
-                              out_dir / f"{word}_margin.png")
+                              sd["margin"] / f"{word}_margin.png")
         rendered += 1
-    _aggregate(out_dir)
-    log.info("Purity done: %d figure(s) in %s", rendered, out_dir)
+    _aggregate(sd, seed)
+    log.info("Purity done: %d word(s) in %s", rendered, out_dir)
 
 
 def purity(cfg: dict, word: str, pos: str | None, only: "list[str] | None" = None,
@@ -471,11 +481,12 @@ def _margin_ridgeline(A, steps, layers, out_path):
     log.info("Wrote %s", out_path)
 
 
-def _aggregate(out_dir):
-    """Average every ``*_purity.csv`` into corpus-level CSV + heatmap grid."""
+def _aggregate(sd, seed):
+    """Pool every word's ``data/*_purity.csv`` (and ``*_margin.npz``) into a
+    corpus-level CSV + figures."""
     from collections import defaultdict
 
-    files = sorted(p for p in out_dir.glob("*_purity.csv") if not p.name.startswith("corpus"))
+    files = sorted(p for p in sd["data"].glob("*_purity.csv") if not p.name.startswith("corpus"))
     if not files:
         return
     pur: dict = defaultdict(list)
@@ -499,7 +510,7 @@ def _aggregate(out_dir):
                     sweep[k][li, si] = float(np.mean(pur[(k, l, s)]))
                     chance[li, si] = float(np.mean(cha[(k, l, s)]))
 
-    with (out_dir / "corpus_purity.csv").open("w", newline="") as fh:
+    with (sd["data"] / "corpus_purity.csv").open("w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["step", "layer", "k", "n_words", "mean_chance", "mean_purity", "std_purity"])
         for k in ks:
@@ -509,7 +520,30 @@ def _aggregate(out_dir):
                     w.writerow([s, l, k, len(v), chance[li, si], sweep[k][li, si],
                                 float(np.std(v)) if v else np.nan])
 
-    _heatmap_grid(ks, steps, layers, sweep, out_dir / "corpus_purity.png")
-    _auc_heatmap(ks, steps, layers, sweep, out_dir / "corpus_purity_auc.png")
-    _pk_curves(ks, steps, layers, sweep, float(np.nanmean(chance)), out_dir / "corpus_purity_pk.png")
+    _heatmap_grid(ks, steps, layers, sweep, sd["heatmap"] / "corpus_purity.png")
+    _auc_heatmap(ks, steps, layers, sweep, sd["auc"] / "corpus_purity_auc.png")
+    _pk_curves(ks, steps, layers, sweep, float(np.nanmean(chance)), sd["pk"] / "corpus_purity_pk.png")
+    _aggregate_margins(sd, seed)
     log.info("Aggregated %d words -> corpus_purity.png", len(files))
+
+
+def _aggregate_margins(sd, seed):
+    """Pool every word's margin distribution per (step, layer) into a corpus
+    ridgeline (all words' margins concatenated, then subsampled)."""
+    files = sorted(p for p in sd["data"].glob("*_margin.npz") if not p.name.startswith("corpus"))
+    if not files:
+        return
+    npz = [np.load(f) for f in files]
+    steps = list(npz[0]["steps"]); layers = list(npz[0]["layers"])
+    per = [d["margins"] for d in npz]                          # each [nS, nL, M]
+    nS, nL = len(steps), len(layers)
+    rng = np.random.default_rng(seed)
+    A = np.full((nS, nL, MARGIN_SUB), np.nan, np.float32)
+    for si in range(nS):
+        for li in range(nL):
+            vals = np.concatenate([p[si, li][np.isfinite(p[si, li])] for p in per])
+            if len(vals):
+                take = vals if len(vals) <= MARGIN_SUB else rng.choice(vals, MARGIN_SUB, replace=False)
+                A[si, li, :len(take)] = take
+    np.savez(sd["data"] / "corpus_margin.npz", margins=A, steps=np.array(steps), layers=np.array(layers))
+    _margin_ridgeline(A, steps, layers, sd["margin"] / "corpus_margin.png")

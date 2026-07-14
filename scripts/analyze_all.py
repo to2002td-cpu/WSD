@@ -1,12 +1,14 @@
-"""Run the sense-cluster purity analysis over the whole corpus.
+"""Run the sense-cluster purity + margin analysis over the whole corpus.
 
-For every lemma in the configured ``lemmas_file``, computes k-NN purity (once,
-cached to ``{word}_purity.csv``) and renders the 3-D surface, plus a corpus
-aggregate. Re-running only re-plots from the CSVs; ``--force`` recomputes.
+For every lemma in the configured ``lemmas_file``, computes k-NN purity and the
+robust margin (once, cached to ``purity/data/``) and renders the purity heatmap,
+log-k AUC, P(k) curves and margin ridgeline, plus a corpus aggregate. Re-running
+only re-plots from the cache; ``--force`` recomputes. ``--pca`` also emits the
+per-condition PCA scatter grid per word.
 
     uv run --extra plot python scripts/analyze_all.py --model pythia-6.9b
     uv run --extra plot python scripts/analyze_all.py --force   # recompute
-    uv run --extra plot python scripts/analyze_all.py --kde     # also KDE grids
+    uv run --extra plot python scripts/analyze_all.py --pca     # also PCA grids
 """
 
 from __future__ import annotations
@@ -33,8 +35,8 @@ def main() -> None:
     ap.add_argument("--model", default=None, help="model config under configs/models/")
     ap.add_argument("--lemmas", default=None, help="lemma list under lemmas/")
     ap.add_argument("--pos", default="n", help="WordNet POS to analyse (default n)")
-    ap.add_argument("-f", "--force", action="store_true", help="recompute purity (else re-plot from CSV)")
-    ap.add_argument("--kde", action="store_true", help="also emit the per-word KDE density grid (PNG)")
+    ap.add_argument("-f", "--force", action="store_true", help="recompute purity + margin (else re-plot from cache)")
+    ap.add_argument("--pca", action="store_true", help="also emit the per-word per-condition PCA grid")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -55,15 +57,15 @@ def main() -> None:
         cache_dir=cache_dir, seed=m["seed"], force=args.force,
     )
 
-    if args.kde:                                                # optional per-word KDE grid (needs UMAP)
-        from src.density import visualize_kde
+    if args.pca:                                                # optional per-word PCA scatter grid
+        from src.pca import visualize
         fig_dir = store(cfg, p["fig_dir"])
         for word in lemmas:
             try:
-                visualize_kde(records, emb_dir, word, args.pos, fig_dir,
-                              cache_dir=cache_dir, min_per_sense=p["min_per_sense"])
+                visualize(records, emb_dir, word, args.pos, fig_dir,
+                          cache_dir=cache_dir, min_per_sense=p["min_per_sense"])
             except SystemExit as e:
-                log.warning("skip KDE %s: %s", word, e)
+                log.warning("skip PCA %s: %s", word, e)
 
     log.info("Analysis done -> %s", out)
 
