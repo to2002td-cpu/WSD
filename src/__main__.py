@@ -1,7 +1,7 @@
 """CLI for the WSD probing pipeline. Everything is driven by configs/.
 
     python -m src synsets  [--model M] [--lemmas L]
-    python -m src generate [--model M] [--lemmas L]       # stage 1 (CPU): synthesize sentences
+    python -m src generate [--model M] [--lemmas L]       # stage 1 (CPU): synthesize + push to HF
     python -m src extract   --model M  [--only LEMMA.POS]  # stage 2 (GPU): pool hidden states
     python -m src purity   WORD --model M [--pos n] [-f]   # stage 3 (CPU): k-NN purity heatmap grid
     python -m src pca      WORD --model M [--pos n]        # per-condition PCA grid (PDF + PNG)
@@ -30,7 +30,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="src", description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("synsets", parents=[common], help="build synsets.json from the lemma list")
-    sub.add_parser("generate", parents=[common], help="stage 1 (CPU): synthesize sentences via API")
+    g = sub.add_parser("generate", parents=[common], help="stage 1 (CPU): synthesize sentences via API")
+    g.add_argument("--no-push", action="store_true", help="skip the HF push after generation")
 
     e = sub.add_parser("extract", parents=[common], help="stage 2 (GPU): pool hidden states per checkpoint")
     e.add_argument("--only", nargs="+", metavar="LEMMA.POS", help="restrict to these generated files")
@@ -61,6 +62,9 @@ def main() -> None:
     elif args.cmd == "generate":
         from .generate import generate
         generate(cfg)
+        if not args.no_push:
+            from .hub import push_dataset
+            push_dataset(cfg)
     elif args.cmd == "extract":
         from .dataset import build_dataset
         from .extract import extract
