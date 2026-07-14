@@ -47,9 +47,14 @@ def _balanced_idx(y: np.ndarray, k: int, max_per_sense: int, rng) -> np.ndarray:
     return np.concatenate(out) if out else np.array([], dtype=int)
 
 
-def _purity(Zn: np.ndarray, yl: np.ndarray, ks: "list[int]") -> "dict[int, float]":
-    """Purity at each k from L2-normalized rows. k beyond the sample clamps to
-    n-1, where purity necessarily equals chance."""
+MARGIN_M = 10        # neighbours per side for the robust margin (mean over m nearest)
+
+
+def _purity(Zn: np.ndarray, yl: np.ndarray, ks: "list[int]"):
+    """From L2-normalized rows: purity at each k (fraction of the k cosine-nearest
+    neighbours sharing the label; k clamps to n-1) and a per-point robust margin
+    (mean cosine to the MARGIN_M nearest same-class minus to the nearest
+    other-class — the metric gap that purity, being rank-based, discards)."""
     n = len(yl)
     ks_eff = {k: min(k, n - 1) for k in ks}
     kmax = max(ks_eff.values())
@@ -57,9 +62,19 @@ def _purity(Zn: np.ndarray, yl: np.ndarray, ks: "list[int]") -> "dict[int, float
     np.fill_diagonal(S, -np.inf)
     part = np.argpartition(-S, kmax - 1, axis=1)[:, :kmax]
     rows = np.arange(n)[:, None]
-    nn = part[rows, np.argsort(-S[rows, part], axis=1)]
+    nn = part[rows, np.argsort(-S[rows, part], axis=1)]        # neighbours, sorted desc
     same = (yl[nn] == yl[:, None])
-    return {k: float(same[:, :ke].mean()) for k, ke in ks_eff.items()}
+    pur = {k: float(same[:, :ke].mean()) for k, ke in ks_eff.items()}
+
+    sims = np.take_along_axis(S, nn, axis=1)                   # their cosine sims, desc
+
+    def _topm_mean(mask):
+        pick = mask & (np.cumsum(mask, axis=1) <= MARGIN_M)
+        cnt = pick.sum(1)
+        return np.where(cnt > 0, np.where(pick, sims, 0.0).sum(1) / np.maximum(cnt, 1), np.nan)
+
+    margin = _topm_mean(same) - _topm_mean(~same)
+    return pur, margin
 
 
 def _purity_at(X, y, n_senses, max_per_sense, ks, rng):
@@ -93,6 +108,7 @@ def _compute(npz_files, plans, ks, max_per_sense, cache_dir, seed):
     layers = layers_of(npz_files[0])
     for plan in plans.values():
         plan["sweep"] = {k: np.full((len(layers), len(steps)), np.nan) for k in ks}
+        plan["margins"] = {}                                   # (li, si) -> per-point margins
     rng = np.random.default_rng(seed)
     for si, (npz, step) in enumerate(zip(npz_files, steps)):
         vectors = load_vectors(npz, cache_dir)
@@ -101,8 +117,10 @@ def _compute(npz_files, plans, ks, max_per_sense, cache_dir, seed):
                 X = np.asarray(vectors[plan["rows"], li, :], np.float32)
                 res = _purity_at(X, plan["y"], len(plan["senses"]), max_per_sense, ks, rng)
                 if res is not None:
-                    for k, pu in res.items():
+                    pur, margin = res
+                    for k, pu in pur.items():
                         plan["sweep"][k][li, si] = pu
+                    plan["margins"][(li, si)] = margin.astype(np.float32)
         del vectors
         log.info("checkpoint %d done (%d words)", step, len(plans))
     return steps, layers
@@ -121,6 +139,21 @@ def _write_csv(path, steps, layers, ks, sweep, chance, n_senses):
                 for si, step in enumerate(steps):
                     pu = sweep[k][li, si]
                     w.writerow([step, layer, k, n_senses, chance, pu, pu - chance])
+    log.info("Wrote %s", path.name)
+
+
+MARGIN_SUB = 800     # per-cell margin subsample kept for the ridgeline
+
+
+def _save_margins(path, steps, layers, margins, rng):
+    """A subsample of per-point margins per (step, layer) -> npz for the ridgeline."""
+    A = np.full((len(steps), len(layers), MARGIN_SUB), np.nan, np.float32)
+    for (li, si), arr in margins.items():
+        arr = arr[np.isfinite(arr)]
+        if len(arr):
+            take = arr if len(arr) <= MARGIN_SUB else rng.choice(arr, MARGIN_SUB, replace=False)
+            A[si, li, :len(take)] = take
+    np.savez(path, margins=A, steps=np.array(steps), layers=np.array(layers))
     log.info("Wrote %s", path.name)
 
 
@@ -173,17 +206,26 @@ def purity_corpus(records, emb_dir, words, pos, out_dir, *, max_per_sense: int,
         log.info("Purity: computing %d word(s) (k sweep %s)", len(plans), ks)
         if plans:
             steps, layers = _compute(npz_files, plans, ks, max_per_sense, cache_dir, seed)
+            rng_sub = np.random.default_rng(seed)
             for word, plan in plans.items():
                 _write_csv(out_dir / f"{word}_purity.csv", steps, layers, ks,
                            plan["sweep"], 1.0 / len(plan["senses"]), len(plan["senses"]))
+                _save_margins(out_dir / f"{word}_margin.npz", steps, layers, plan["margins"], rng_sub)
 
     rendered = 0
     for word in words:
         csv_path = out_dir / f"{word}_purity.csv"
         if not csv_path.exists():
             continue
-        steps, layers, kk, sweep, _ = _read_csv(csv_path)
+        steps, layers, kk, sweep, chance = _read_csv(csv_path)
         _heatmap_grid(kk, steps, layers, sweep, out_dir / f"{word}_purity.png")
+        _auc_heatmap(kk, steps, layers, sweep, out_dir / f"{word}_purity_auc.png")
+        _pk_curves(kk, steps, layers, sweep, chance, out_dir / f"{word}_purity_pk.png")
+        margin_path = out_dir / f"{word}_margin.npz"
+        if margin_path.exists():
+            d = np.load(margin_path)
+            _margin_ridgeline(d["margins"], list(d["steps"]), list(d["layers"]),
+                              out_dir / f"{word}_margin.png")
         rendered += 1
     _aggregate(out_dir)
     log.info("Purity done: %d figure(s) in %s", rendered, out_dir)
@@ -281,6 +323,154 @@ def _heatmap_grid(ks, steps, layers, sweep, out_path):
     log.info("Wrote %s", out_path)
 
 
+def _auc_heatmap(ks, steps, layers, sweep, out_path):
+    """The k-sweep collapsed to one number per (layer, step): purity integrated
+    over log k (P(k) -> 1/K as k grows, so this measures how slowly separation
+    decays with neighbourhood scale). A single layer x step heatmap."""
+    from matplotlib.cm import ScalarMappable
+    from matplotlib.colors import Normalize
+
+    from .plots import EDGE, GRID, INK_SOFT, MUTED, PURITY_CMAP, _style, fmt_step, save
+
+    _style()
+    import matplotlib.pyplot as plt
+
+    nL, nS = len(layers), len(steps)
+    lk = np.log10(ks)
+    span = lk[-1] - lk[0]
+    A = np.full((nL, nS), np.nan)
+    for li in range(nL):
+        for si in range(nS):
+            col = np.array([sweep[k][li, si] for k in ks], float)
+            if np.all(np.isfinite(col)):
+                A[li, si] = np.sum(np.diff(lk) * (col[:-1] + col[1:]) / 2) / span  # log-k mean purity
+
+    cmap = PURITY_CMAP.copy(); cmap.set_bad(GRID)
+    norm = Normalize(0, 1)
+    fig, ax = plt.subplots(figsize=(0.45 * nS + 1.2, 0.34 * nL + 1.2))
+    ax.imshow(np.ma.masked_invalid(A), cmap=cmap, norm=norm, origin="lower",
+              aspect="auto", interpolation="nearest")
+    ax.set_xticks(np.arange(-0.5, nS, 1), minor=True)
+    ax.set_yticks(np.arange(-0.5, nL, 1), minor=True)
+    ax.grid(which="minor", color=GRID, linewidth=0.6)
+    ax.tick_params(which="both", length=0)
+    for sp in ax.spines.values():
+        sp.set_visible(True); sp.set_edgecolor(EDGE); sp.set_linewidth(0.6)
+    ax.set_xticks(range(nS)); ax.set_xticklabels([fmt_step(s) for s in steps], rotation=45, ha="right")
+    ax.set_yticks(range(nL)); ax.set_yticklabels([str(l) for l in layers])
+    ax.set_xlabel("training step  $\\rightarrow$", color=INK_SOFT, labelpad=4)
+    ax.set_ylabel("layer", color=INK_SOFT, labelpad=4)
+
+    sm = ScalarMappable(norm=norm, cmap=PURITY_CMAP); sm.set_array([])
+    cbar = fig.colorbar(sm, ax=ax, fraction=0.045, pad=0.03, ticks=[0, 0.25, 0.5, 0.75, 1.0])
+    cbar.set_label("mean $k$-NN purity (log-$k$ AUC)", color=INK_SOFT)
+    cbar.outline.set_edgecolor(EDGE); cbar.outline.set_linewidth(0.6)
+    cbar.ax.tick_params(labelsize=7, colors=MUTED)
+    fig.tight_layout()
+    save(fig, out_path, dpi=400)
+    log.info("Wrote %s", out_path)
+
+
+def _pk_curves(ks, steps, layers, sweep, chance, out_path):
+    """P(k) = purity vs neighbourhood size k (log x), one curve per checkpoint
+    (light -> dark = training), one panel per layer. The slope reads the scale of
+    separation (steep = only local); the AUC heatmap is the area under each curve."""
+    from matplotlib.cm import ScalarMappable
+    from matplotlib.colors import LinearSegmentedColormap, Normalize
+
+    from .plots import EDGE, INK_SOFT, MUTED, WIDE_WIDTH, _style, fmt_step, save
+
+    _style()
+    import matplotlib.pyplot as plt
+
+    nS, nL = len(steps), len(layers)
+    ramp = LinearSegmentedColormap.from_list("tr", ["#CBD8EE", "#8FB0DB", "#1F4E8C"])
+
+    fig, axes = plt.subplots(1, nL, figsize=(WIDE_WIDTH, 1.9), sharey=True, squeeze=False)
+    for li, ax in enumerate(axes[0]):
+        for si in range(nS):
+            y = np.array([sweep[k][li, si] for k in ks])
+            ax.plot(ks, y, color=ramp(si / (nS - 1)), lw=1.1, solid_capstyle="round")
+        if np.isfinite(chance):
+            ax.axhline(chance, color=MUTED, lw=0.7, ls=(0, (3, 2)))
+            if li == 0:
+                ax.text(ks[0] * 1.1, chance + 0.03, "chance", fontsize=6, color=MUTED)
+        ax.set_xscale("log"); ax.set_ylim(0, 1.02)
+        ax.set_xticks([ks[0], 100, ks[-1]]); ax.set_xticklabels([fmt_step(ks[0]), "100", fmt_step(ks[-1])])
+        ax.set_title(f"layer {layers[li]}", color=MUTED, fontsize=7.5)
+        ax.set_yticks([0, 0.5, 1.0]); ax.tick_params(colors=MUTED)
+        if li:
+            ax.tick_params(labelleft=False)
+        for s in ("top", "right"):
+            ax.spines[s].set_visible(False)
+        for s in ("left", "bottom"):
+            ax.spines[s].set_edgecolor(EDGE); ax.spines[s].set_linewidth(0.6)
+
+    fig.text(0.5, 0.02, "$k$  (log)", ha="center", fontsize=8.5, color=INK_SOFT)
+    fig.text(0.007, 0.55, "sense purity  $P(k)$", rotation=90, va="center", ha="center",
+             fontsize=8.5, color=INK_SOFT)
+    fig.subplots_adjust(left=0.065, right=0.9, top=0.86, bottom=0.19, wspace=0.12)
+    sm = ScalarMappable(norm=Normalize(0, nS - 1), cmap=ramp); sm.set_array([])
+    cax = fig.add_axes((0.915, 0.2, 0.013, 0.62))
+    cb = fig.colorbar(sm, cax=cax, ticks=range(0, nS, 2))
+    cb.ax.set_yticklabels([fmt_step(steps[i]) for i in range(0, nS, 2)], fontsize=6)
+    cb.set_label("training step", color=INK_SOFT, fontsize=8)
+    cb.outline.set_edgecolor(EDGE); cb.ax.tick_params(length=0, colors=MUTED)
+    save(fig, out_path, dpi=400)
+    log.info("Wrote %s", out_path)
+
+
+def _margin_ridgeline(A, steps, layers, out_path):
+    """Ridgeline of the per-point margin distribution across checkpoints (bottom =
+    init, top = final), one panel per layer. Mass moving from ~0 to positive = the
+    class boundary widening over training. Dashed line at margin 0."""
+    from scipy.stats import gaussian_kde
+
+    from .plots import EDGE, INK_SOFT, MUTED, SENSE_COLORS, WIDE_WIDTH, _style, fmt_step, save
+
+    _style()
+    import matplotlib.pyplot as plt
+
+    nS, nL, _ = A.shape
+    finite = A[np.isfinite(A)]
+    lo, hi = np.percentile(finite, [0.5, 99.5])
+    pad = 0.06 * (hi - lo)
+    xs = np.linspace(lo - pad, hi + pad, 200)
+    color = SENSE_COLORS[0]
+    overlap = 1.7
+
+    fig, axes = plt.subplots(1, nL, figsize=(WIDE_WIDTH, 0.26 * nS + 1.0), sharex=True, squeeze=False)
+    for li, ax in enumerate(axes[0]):
+        for si in range(nS):
+            m = A[si, li]; m = m[np.isfinite(m)]
+            if len(m) < 5:
+                continue
+            try:
+                d = gaussian_kde(m)(xs)
+            except Exception:
+                continue
+            d = d / d.max() * overlap
+            ax.fill_between(xs, si, si + d, color=color, alpha=0.5, lw=0, zorder=si)
+            ax.plot(xs, si + d, color=INK_SOFT, lw=0.5, zorder=si)
+        ax.axvline(0, color=MUTED, lw=0.7, ls=(0, (3, 2)), zorder=nS + 1)
+        ax.set_title(f"layer {layers[li]}", color=MUTED, fontsize=7.5)
+        ax.set_ylim(-0.2, nS - 1 + overlap + 0.2)
+        ax.set_yticks(range(nS))
+        ax.set_yticklabels([fmt_step(s) for s in steps] if li == 0 else [], fontsize=6)
+        ax.tick_params(which="both", length=0, colors=MUTED)
+        for s in ("top", "right", "left"):
+            ax.spines[s].set_visible(False)
+        ax.spines["bottom"].set_edgecolor(EDGE); ax.spines["bottom"].set_linewidth(0.6)
+
+    fig.text(0.5, 0.02, "margin   (cos to same $-$ cos to other)", ha="center",
+             fontsize=8.5, color=INK_SOFT)
+    fig.text(0.007, 0.55, "training step", rotation=90, va="center", ha="center",
+             fontsize=8.5, color=INK_SOFT)
+    fig.subplots_adjust(left=0.06, right=0.995, top=0.88, bottom=0.14, wspace=0.08)
+    save(fig, out_path, dpi=400)
+    log.info("Wrote %s", out_path)
+
+
 def _aggregate(out_dir):
     """Average every ``*_purity.csv`` into corpus-level CSV + heatmap grid."""
     from collections import defaultdict
@@ -320,4 +510,6 @@ def _aggregate(out_dir):
                                 float(np.std(v)) if v else np.nan])
 
     _heatmap_grid(ks, steps, layers, sweep, out_dir / "corpus_purity.png")
+    _auc_heatmap(ks, steps, layers, sweep, out_dir / "corpus_purity_auc.png")
+    _pk_curves(ks, steps, layers, sweep, float(np.nanmean(chance)), out_dir / "corpus_purity_pk.png")
     log.info("Aggregated %d words -> corpus_purity.png", len(files))
