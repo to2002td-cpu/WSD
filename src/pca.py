@@ -84,9 +84,7 @@ def _load_or_compute(emb_dir, word, pos, rows, steps, layers, cache_dir):
     return coords, evr
 
 
-# --------------------------------------------------------------------------- #
-# Figure                                                                      #
-# --------------------------------------------------------------------------- #
+# Figure
 
 def _extent(P, pad=0.06):
     """Square limits covering every point (equal aspect, nothing cropped)."""

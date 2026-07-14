@@ -32,9 +32,7 @@ log = logging.getLogger(__name__)
 MIN_SAMPLES = 20     # a sense needs at least this many occurrences to be scored
 
 
-# --------------------------------------------------------------------------- #
-# Purity computation                                                          #
-# --------------------------------------------------------------------------- #
+# Purity computation
 
 def _balanced_idx(y: np.ndarray, k: int, max_per_sense: int, rng) -> np.ndarray:
     """Up to ``max_per_sense`` indices per sense, so chance is a clean 1/K."""
@@ -126,9 +124,7 @@ def _compute(npz_files, plans, ks, max_per_sense, cache_dir, seed):
     return steps, layers
 
 
-# --------------------------------------------------------------------------- #
-# CSV I/O                                                                      #
-# --------------------------------------------------------------------------- #
+# CSV I/O
 
 def _write_csv(path, steps, layers, ks, sweep, chance, n_senses):
     with path.open("w", newline="") as fh:
@@ -175,9 +171,7 @@ def _read_csv(path):
     return steps, layers, ks, sweep, chance
 
 
-# --------------------------------------------------------------------------- #
-# Drivers                                                                      #
-# --------------------------------------------------------------------------- #
+# Drivers
 
 def _subdirs(out_dir):
     """Self-describing output folders: data (CSVs + margin npz) and one per figure."""
@@ -259,9 +253,7 @@ def purity(cfg: dict, word: str, pos: str | None, only: "list[str] | None" = Non
     )
 
 
-# --------------------------------------------------------------------------- #
-# Purity heatmap grid (one panel per checkpoint)                               #
-# --------------------------------------------------------------------------- #
+# Purity heatmap grid (one panel per checkpoint)
 
 def _surface_z(ks, layers, sweep, si):
     """purity[layer, k] grid for one checkpoint (rows = layer, cols = k)."""
