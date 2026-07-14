@@ -23,10 +23,10 @@ scripts/              thin wrappers: *.sh are OAR jobs, *.py are batch drivers
 data/                 runtime data & outputs — git-ignored (see storage_root)
 ```
 
-`src/` — one module per stage: `synsets` · `generate` · `dataset` · `extract` ·
-`purity` (k-NN purity + 3-D surface) · `density` (KDE grid) · `embeddings`
-(shared loaders) · `umap_cache` (UMAP for KDE) · `hub` (HF push) · `plots` ·
-`config` · `__main__`.
+`src/` — one module per stage: `synsets` · `generate` (API + HF push) · `dataset`
+· `extract` · `purity` (k-NN purity heatmaps + margin) · `pca` (per-condition PCA
+grid) · `embeddings` (shared loaders) · `hub` (HF push) · `plots` · `config` ·
+`__main__`.
 
 ## Pipeline
 
@@ -69,21 +69,25 @@ uv run python -m src purity bank --model pythia-6.9b   # one word
 ./scripts/analyze.sh --model pythia-6.9b               # whole corpus
 ```
 
-Writes `<storage>/purity/`: `bank_purity.csv` (purity per step × layer × k, with
-the `chance = 1/K` baseline) and `bank_purity.png` (one 3-D surface over k × layer
-per checkpoint). The CSV is the cached artifact — re-running **re-renders figures
-from it without recomputing**; pass `-f/--force` to recompute. `density.sh bank`
-renders the per-sense KDE grid.
+Writes `<storage>/purity/`, split into self-describing folders: `data/`
+(`bank_purity.csv` — purity per step × layer × k with the `chance = 1/K` baseline
+— plus the margin `.npz`) and one folder per figure (`heatmap/`, `auc/`, `pk/`,
+`margin/`). The CSV is the cached artifact — re-running **re-renders figures from
+it without recomputing**; pass `-f/--force` to recompute. `pca.sh bank` renders
+the per-condition PCA scatter grid.
 
 ## Push sentences to HuggingFace
+
+Generation pushes automatically when it finishes; `push` runs the same step alone:
 
 ```bash
 HF_TOKEN=hf_... ./scripts/push.sh --repo-id you/wsd-sentences
 ```
 
-Uploads `dataset.jsonl` (the sense-annotated sentences + a dataset card) to a HF
-dataset repo. Set `hub.repo_id` in the config or pass `--repo-id`; `--public` for
-a public repo.
+Rebuilds the cleaned corpus from the generated sentences and uploads it as
+`dataset.parquet` **and** `dataset.jsonl` (plus a dataset card). Set the target
+via `hub.repo_id`, `--repo-id`, or `$HF_REPO_ID`; `--public` for a public repo.
+`generate --no-push` skips the automatic upload.
 
 ## Conventions
 
@@ -92,8 +96,8 @@ a public repo.
 - **`src/` is importable, `scripts/` is thin.**
 - **Outputs never touch git** — everything writes under `storage_root`
   (`$WSD_STORAGE_ROOT` > `config.storage_root` > repo); `data/` is ignored.
-- **Reproducible** — generation samples every style equally with a seeded
-  per-lemma RNG; dataset, extraction, and purity are seeded and deterministic.
+- **Reproducible** — generation fills every style equally with a seeded
+  per-(sense, style) RNG; dataset, extraction, and purity are seeded and deterministic.
 - **Idempotent** — every stage caches its outputs; re-runs recompute nothing.
 
 ## Setup
