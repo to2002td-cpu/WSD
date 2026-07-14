@@ -1,9 +1,11 @@
 """Stage 1 (CPU): synthesize sense-annotated sentences via the chat API.
 
-For every WordNet sense we request one sentence at a time, keeping only valid
-self-checked ones, until each (sense, style) pair reaches ``per_synset //
-n_styles`` — so every style is sampled equally. Output is one resumable JSONL per
-lemma at ``<out_dir>/<lemma>.<pos>.jsonl``; re-running tops up short pairs.
+One sentence per request. Every WordNet (sense, style) pair is filled to
+``per_synset // n_styles`` valid, self-checked sentences, so styles are balanced.
+All pairs across all lemmas share a single work queue: workers stay busy on
+whatever still needs sentences instead of draining one lemma at a time. Output is
+one resumable JSONL per lemma at ``<out_dir>/<lemma>.<pos>.jsonl``; re-running
+tops up short pairs.
 """
 
 from __future__ import annotations
@@ -11,12 +13,17 @@ from __future__ import annotations
 import json
 import logging
 import random
-from concurrent.futures import ThreadPoolExecutor
+import threading
+from collections import deque
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
+from requests.adapters import HTTPAdapter
 from tqdm import tqdm
+from urllib3.util.retry import Retry
 
 from .config import resolve, store
 from .synsets import load_or_build_synsets
@@ -73,18 +80,30 @@ def parse_result(text: str) -> "dict | None":
 
 
 class Client:
+    """Chat-completions client over a connection-pooled session, so concurrent
+    workers reuse TCP/TLS connections and retry the proxy's transient 5xx."""
+
     def __init__(self, cfg: dict):
         self.url = cfg["api_url"]
         self.model = cfg["model"]
         self.max_tokens = cfg["max_tokens"]
         key = resolve(cfg["api_key_file"]).read_text().strip()
-        self.headers = {"Content-Type": "application/json", "Authorization": f"Bearer {key}"}
+
+        pool = cfg["workers"]
+        retry = Retry(total=2, backoff_factor=0.5, status_forcelist=(502, 503, 504),
+                      allowed_methods=frozenset({"POST"}))
+        adapter = HTTPAdapter(pool_connections=pool, pool_maxsize=pool, max_retries=retry)
+        self.session = requests.Session()
+        self.session.headers.update({"Content-Type": "application/json",
+                                     "Authorization": f"Bearer {key}"})
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
 
     def complete(self, prompt: str, seed: int) -> "str | None":
         payload = {"model": self.model, "messages": [{"role": "user", "content": prompt}],
                    "stream": False, "max_tokens": self.max_tokens, "seed": seed}
         try:
-            resp = requests.post(self.url, headers=self.headers, json=payload, timeout=60)
+            resp = self.session.post(self.url, json=payload, timeout=120)
         except requests.RequestException as exc:
             log.debug("request error: %s", exc)
             return None
@@ -123,32 +142,98 @@ def _counts(path: Path) -> "dict[tuple[str, str], int]":
     return counts
 
 
-def _fill_lemma(client, template, lemma, senses, styles, per_style, cap, pool, out, rng, have):
-    """Fill every (sense, style) pair of one lemma to ``per_style`` valid
-    sentences, requesting in rounds until the target or the per-pair attempt cap
-    ``cap`` is reached. Styles are filled equally by construction."""
-    by_id = {s["id"]: s for s in senses}
-    pairs = [(s["id"], style) for s in senses for style in styles]
-    got = {p: have.get(p, 0) for p in pairs}
-    attempts = {p: 0 for p in pairs}
-    while True:
-        tasks = []
-        for p in pairs:
-            room = min(per_style - got[p], cap - attempts[p])
-            if room > 0:
-                tasks.extend([p] * room)
-                attempts[p] += room
-        if not tasks:
-            break
-        rng.shuffle(tasks)
-        jobs = [(by_id[sid], style, rng.randrange(2**31)) for sid, style in tasks]
-        for (sid, style), rec in zip(tasks, pool.map(
-                lambda j: _make_record(client, template, lemma, j[0], j[1], j[2]), jobs)):
-            if rec is not None:
-                out.write(json.dumps(rec, ensure_ascii=False) + "\n")
-                got[(sid, style)] += 1
-        out.flush()
-    return got
+class _LemmaFile:
+    """Thread-safe appender for one lemma's JSONL output."""
+
+    def __init__(self, path: Path):
+        self._fh = path.open("a")
+        self._lock = threading.Lock()
+
+    def write(self, record: dict) -> None:
+        line = json.dumps(record, ensure_ascii=False) + "\n"
+        with self._lock:
+            self._fh.write(line)
+            self._fh.flush()
+
+    def close(self) -> None:
+        self._fh.close()
+
+
+@dataclass
+class _Pair:
+    """One (sense, style) pair being filled to ``target`` valid sentences."""
+    lemma: str
+    sense: dict
+    style: str
+    target: int
+    writer: _LemmaFile
+    max_attempts: int
+    rng: random.Random = field(repr=False)
+    got: int = 0
+    attempts: int = 0
+    pending: int = 0
+
+    def next_seed(self) -> int:
+        return self.rng.randrange(2**31)
+
+    def needs_work(self) -> bool:
+        return self.got < self.target and self.attempts < self.max_attempts
+
+
+def _build_pairs(synsets, styles, per_style, out_dir, seed, max_attempts):
+    """One ``_Pair`` per (lemma, sense, style) still short of ``per_style``, plus
+    the per-lemma writers to close afterwards."""
+    pairs, writers = [], []
+    for group in synsets:
+        path = out_dir / f"{group['lemma']}.{group['pos']}.jsonl"
+        have = _counts(path)
+        writer = _LemmaFile(path)
+        writers.append(writer)
+        for sense in group["senses"]:
+            for style in styles:
+                target = per_style - have.get((sense["id"], style), 0)
+                if target <= 0:
+                    continue
+                rng = random.Random(f"{seed}-{group['lemma']}-{sense['id']}-{style}")
+                pairs.append(_Pair(group["lemma"], sense, style, target, writer,
+                                   max_attempts=max_attempts, rng=rng))
+    return pairs, writers
+
+
+def _run_queue(pairs, client, template, workers, progress) -> None:
+    """Drive all pairs concurrently through a shy sliding window of at most
+    ``workers`` in-flight requests, round-robin so every pair makes progress."""
+    ready = deque(pairs)
+    inflight: dict = {}
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        def fill() -> None:
+            rounds = 0
+            while len(inflight) < workers and ready and rounds < len(ready):
+                pair = ready[0]
+                if not pair.needs_work():
+                    ready.popleft(); rounds = 0; continue
+                if pair.got + pair.pending >= pair.target:        # enough already in flight
+                    ready.rotate(-1); rounds += 1; continue
+                pair.attempts += 1
+                pair.pending += 1
+                fut = pool.submit(_make_record, client, template, pair.lemma,
+                                  pair.sense, pair.style, pair.next_seed())
+                inflight[fut] = pair
+                ready.rotate(-1); rounds = 0
+
+        fill()
+        while inflight:
+            done, _ = wait(inflight, return_when=FIRST_COMPLETED)
+            for fut in done:
+                pair = inflight.pop(fut)
+                pair.pending -= 1
+                rec = fut.result()
+                if rec is not None and pair.got < pair.target:
+                    pair.writer.write(rec)
+                    pair.got += 1
+                    progress.update(1)
+            fill()
 
 
 def generate(cfg: dict) -> None:
@@ -165,15 +250,20 @@ def generate(cfg: dict) -> None:
     out_dir = store(cfg, gen["out_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    with ThreadPoolExecutor(max_workers=gen["workers"]) as pool:
-        for group in tqdm(synsets, desc="Lemmas", unit="lemma"):
-            path = out_dir / f"{group['lemma']}.{group['pos']}.jsonl"
-            have = _counts(path)
-            rng = random.Random(f"{gen.get('seed', 0)}-{group['lemma']}")   # deterministic per lemma
-            with path.open("a") as out:
-                got = _fill_lemma(client, template, group["lemma"], group["senses"], styles,
-                                  per_style, gen["max_attempts"], pool, out, rng, have)
-            for (sid, style), n in got.items():
-                if n < per_style:
-                    log.warning("%s %s/%s: %d/%d after cap", group["lemma"], sid, style, n, per_style)
+    pairs, writers = _build_pairs(synsets, styles, per_style, out_dir,
+                                  gen.get("seed", 0), gen["max_attempts"])
+    total = sum(p.target for p in pairs)
+    log.info("Generating %d sentences over %d (sense, style) pairs, %d workers",
+             total, len(pairs), gen["workers"])
+    try:
+        with tqdm(total=total, desc="Sentences", unit="sent") as progress:
+            _run_queue(pairs, client, template, gen["workers"], progress)
+    finally:
+        for writer in writers:
+            writer.close()
+
+    for pair in pairs:
+        if pair.got < pair.target:
+            log.warning("%s %s/%s: %d/%d after %d attempts", pair.lemma, pair.sense["id"],
+                        pair.style, pair.got, pair.target, pair.attempts)
     log.info("Generation complete -> %s", out_dir)
