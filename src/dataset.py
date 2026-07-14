@@ -52,16 +52,13 @@ def _read_generated(gen_dir: Path, only: "list[str] | None" = None) -> "list[dic
     return rows
 
 
-def build_dataset(cfg: dict, only: "list[str] | None" = None) -> "list[dict]":
-    """Build (or reuse) the extraction dataset from the generated sentences,
-    locating each target span. ``only`` restricts to given stems (e.g. ['bank.n'])."""
+def assemble_records(cfg: dict, only: "list[str] | None" = None) -> "list[dict]":
+    """Clean the generated sentences into dataset records: drop invalid ones,
+    locate each target span, filter senses by count, and cap per sense. Pure — no
+    caching — so callers that publish a fresh corpus never touch the on-disk
+    extraction dataset (whose row order must stay aligned with the embeddings)."""
     ds = cfg["dataset"]
-    from .config import run_paths, store
-
-    out_path, _ = run_paths(cfg, only)
-    if out_path.exists():
-        log.info("Dataset %s exists, reusing", out_path)
-        return load_dataset(out_path)
+    from .config import store
 
     gen_dir = store(cfg, cfg["generate"]["out_dir"])
     raw = _read_generated(gen_dir, only)
@@ -107,16 +104,29 @@ def build_dataset(cfg: dict, only: "list[str] | None" = None) -> "list[dict]":
             recs = rng.sample(recs, ds["max_examples_per_sense"])
         records.extend(recs)
 
+    log.info("Kept %d instances across %d senses (dropped %d invalid, %d word-not-found)",
+             len(records), len({(r["word"], r["pos"], r["sense"]) for r in records}),
+             n_invalid, n_nolocate)
+    return records
+
+
+def build_dataset(cfg: dict, only: "list[str] | None" = None) -> "list[dict]":
+    """The extraction dataset: assembled once and cached, so extraction and
+    analysis read a stable row order. ``only`` restricts to given stems
+    (e.g. ['bank.n']). Use ``assemble_records`` to rebuild without caching."""
+    from .config import run_paths
+
+    out_path, _ = run_paths(cfg, only)
+    if out_path.exists():
+        log.info("Dataset %s exists, reusing", out_path)
+        return load_dataset(out_path)
+
+    records = assemble_records(cfg, only)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w") as f:
         for rec in records:
             f.write(json.dumps(rec) + "\n")
-    log.info(
-        "Kept %d instances across %d senses "
-        "(dropped %d invalid, %d word-not-found); wrote %s",
-        len(records), len({(r["word"], r["pos"], r["sense"]) for r in records}),
-        n_invalid, n_nolocate, out_path,
-    )
+    log.info("Wrote %s", out_path)
     return records
 
 
