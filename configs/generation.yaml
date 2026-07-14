@@ -3,10 +3,10 @@ generate:
   api_key_file: data/api.txt
   styles_file: prompts/styles.json
   prompt_file: prompts/generate.txt
-  model: gemma-4-31b
+  model: ilaas/gemma-4-31b       # live LiteLLM route; bare `gemma-4-31b` is often 503
   max_tokens: 2048
   per_synset: 1000               # sentences per sense; balanced 1000 / 20 styles = 50 each
   max_attempts: 200              # per (sense, style) request cap
-  workers: 16
+  workers: 32                    # concurrent requests; the proxy scales ~linearly to here
   out_dir: generated
   seed: 0
