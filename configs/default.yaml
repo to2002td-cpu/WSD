@@ -11,6 +11,6 @@ lemmas_file: lemmas/nouns_top50.txt   # default study set (top-50 nouns by frequ
 synsets_cache: synsets.json
 synsets_pos: [n]                       # restrict studied senses to nouns (null = all content POS)
 
-hub:                                   # push generated sentences to a HF dataset repo
-  repo_id: ""                          # e.g. your-org/wsd-sentences; token from $HF_TOKEN
+hub:                                   # generate pushes the corpus (parquet + jsonl) here
+  repo_id: ""                          # e.g. your-org/wsd-sentences (or $HF_REPO_ID); token from $HF_TOKEN
   private: true
