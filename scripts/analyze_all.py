@@ -37,6 +37,8 @@ def main() -> None:
     ap.add_argument("--pos", default="n", help="WordNet POS to analyse (default n)")
     ap.add_argument("-f", "--force", action="store_true", help="recompute purity + margin (else re-plot from cache)")
     ap.add_argument("--pca", action="store_true", help="also emit the per-word per-condition PCA grid")
+    ap.add_argument("--similarity", action="store_true",
+                    help="also emit the per-word sense x sense similarity matrix grid")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -66,6 +68,11 @@ def main() -> None:
                           cache_dir=cache_dir, min_per_sense=p["min_per_sense"])
             except SystemExit as e:
                 log.warning("skip PCA %s: %s", word, e)
+
+    if args.similarity:                                         # optional per-word similarity matrix grid
+        from src.similarity import similarity_corpus
+        similarity_corpus(records, emb_dir, lemmas, args.pos, out / "similarity",
+                          cache_dir=cache_dir, min_per_sense=p["min_per_sense"])
 
     log.info("Analysis done -> %s", out)
 

@@ -125,6 +125,35 @@ def _grid(steps, layers, sizes, M, word, out_path):
     log.info("Wrote %s", out_path)
 
 
+def visualize(records, emb_dir, word, pos, out_dir, *, cache_dir=None, min_per_sense=0,
+             max_senses=12, points_per_sense=40, seed=0) -> None:
+    """The sense x sense similarity grid for one word, given an already-loaded
+    corpus. Shared by the single-word CLI and the corpus-wide driver so the
+    dataset and per-checkpoint embeddings aren't reloaded per word."""
+    npz_files = sorted_checkpoints(emb_dir)
+    valid = valid_mask(npz_files, cache_dir)
+    plan = prep_word(records, word, pos, valid, min_per_sense, max_senses)
+    if plan is None:
+        raise SystemExit(f"'{word}' has <2 senses with >= {min_per_sense} occurrences.")
+
+    rng = np.random.default_rng(seed)
+    idx, sizes = _blocks(plan["y"], len(plan["senses"]), points_per_sense, rng)
+    steps, layers, M = _compute(npz_files, plan["rows"], idx, cache_dir, valid)
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    _grid(steps, layers, sizes, M, word, out_dir / f"{word}_similarity.png")
+
+
+def similarity_corpus(records, emb_dir, words, pos, out_dir, **kwargs) -> None:
+    """``visualize`` for many words, skipping (with a warning) any that don't
+    have enough senses."""
+    for word in words:
+        try:
+            visualize(records, emb_dir, word, pos, out_dir, **kwargs)
+        except SystemExit as e:
+            log.warning("skip %s: %s", word, e)
+
+
 def similarity(cfg: dict, word: str, pos: str | None, only: "list[str] | None" = None,
               points_per_sense: int = 40, seed: int = 0) -> None:
     from .config import run_paths, store
@@ -136,16 +165,7 @@ def similarity(cfg: dict, word: str, pos: str | None, only: "list[str] | None" =
     cache_dir = (emb_dir / "_npy_cache") if p["npy_cache"] else None
     records = build_dataset(cfg, only)
 
-    npz_files = sorted_checkpoints(emb_dir)
-    valid = valid_mask(npz_files, cache_dir)
-    plan = prep_word(records, word, pos, valid, p["min_per_sense"], m.get("max_senses", 12))
-    if plan is None:
-        raise SystemExit(f"'{word}' has <2 senses with >= {p['min_per_sense']} occurrences.")
-
-    rng = np.random.default_rng(seed)
-    idx, sizes = _blocks(plan["y"], len(plan["senses"]), points_per_sense, rng)
-    steps, layers, M = _compute(npz_files, plan["rows"], idx, cache_dir, valid)
-
     out_dir = store(cfg, m.get("out_dir", "purity")) / "similarity"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    _grid(steps, layers, sizes, M, word, out_dir / f"{word}_similarity.png")
+    visualize(records, emb_dir, word, pos, out_dir, cache_dir=cache_dir,
+             min_per_sense=p["min_per_sense"], max_senses=m.get("max_senses", 12),
+             points_per_sense=points_per_sense, seed=seed)
