@@ -95,6 +95,7 @@ def _prep_word(records, word, pos, valid, min_per_sense, max_senses):
     senses = displayed_senses(meta, min_per_sense, max_senses)
     if len(senses) < 2:
         return None
+    meta = meta[meta["sense"].isin(senses)]          # drop occurrences of non-displayed senses
     sense_arr = meta["sense"].to_numpy()
     y = np.array([senses.index(s) for s in sense_arr])
     return dict(pos=pos, rows=meta["row"].to_numpy(), senses=senses, y=y)
