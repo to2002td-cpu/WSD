@@ -90,7 +90,7 @@ def _purity_at(X, y, n_senses, max_per_sense, ks, rng):
     return _purity(Z, yl, ks)
 
 
-def _prep_word(records, word, pos, valid, min_per_sense, max_senses):
+def prep_word(records, word, pos, valid, min_per_sense, max_senses):
     meta, pos = population(records, word, pos, valid)
     senses = displayed_senses(meta, min_per_sense, max_senses)
     if len(senses) < 2:
@@ -200,7 +200,7 @@ def purity_corpus(records, emb_dir, words, pos, out_dir, *, max_per_sense: int,
         plans = {}
         for word in todo:
             try:
-                plan = _prep_word(records, word, pos, valid, min_per_sense, max_senses)
+                plan = prep_word(records, word, pos, valid, min_per_sense, max_senses)
             except SystemExit as e:
                 log.warning("skip %s: %s", word, e)
                 continue

@@ -3,8 +3,9 @@
     python -m src synsets  [--model M] [--lemmas L]
     python -m src generate [--model M] [--lemmas L]       # stage 1 (CPU): synthesize + push to HF
     python -m src extract   --model M  [--only LEMMA.POS]  # stage 2 (GPU): pool hidden states
-    python -m src purity   WORD --model M [--pos n] [-f]   # stage 3 (CPU): k-NN purity heatmap grid
-    python -m src pca      WORD --model M [--pos n]        # per-condition PCA grid (PDF + PNG)
+    python -m src purity     WORD --model M [--pos n] [-f] # stage 3 (CPU): k-NN purity heatmap grid
+    python -m src similarity WORD --model M [--pos n]      # sense x sense similarity matrix grid
+    python -m src pca        WORD --model M [--pos n]      # per-condition PCA grid (PDF + PNG)
     python -m src push     [--repo-id ID] [--public]       # push sentences to a HF dataset repo
 
 --model picks configs/models/<M>.yaml, --lemmas picks lemmas/<L>.txt, --config
@@ -39,6 +40,7 @@ def main() -> None:
     for name, helptext in [
         ("pca", "per-word per-condition PCA grid (layer × checkpoint)"),
         ("purity", "per-word k-NN sense-cluster purity heatmap grid (k × layer per checkpoint)"),
+        ("similarity", "per-word sense x sense similarity matrix grid (layer × checkpoint)"),
     ]:
         sp = sub.add_parser(name, parents=[common], help=helptext)
         sp.add_argument("word", help="target lemma, e.g. 'bank'")
@@ -75,6 +77,9 @@ def main() -> None:
     elif args.cmd == "purity":
         from .purity import purity
         purity(cfg, args.word, args.pos, args.only, args.force)
+    elif args.cmd == "similarity":
+        from .similarity import similarity
+        similarity(cfg, args.word, args.pos, args.only)
     elif args.cmd == "push":
         from .hub import push_dataset
         push_dataset(cfg, args.repo_id, private=not args.public)
