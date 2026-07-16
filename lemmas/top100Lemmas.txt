@@ -10,7 +10,6 @@ time
 new
 let
 data
-may
 such
 fig
 any
@@ -98,3 +97,4 @@ much
 find
 analysis
 example
+day
