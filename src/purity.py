@@ -2,9 +2,11 @@
 
 For each occurrence, ``purity`` at neighbourhood size ``k`` is the fraction of its
 ``k`` cosine-nearest neighbours (raw hidden states, self excluded) that share its
-WordNet sense, averaged over a balanced sample. ``chance = 1/K`` (K balanced
-senses) is the fully-mixed floor. Being local, purity is robust to a sense
-splitting into several clusters; sweeping ``k`` shows how far it reaches.
+WordNet sense, averaged over every occurrence of every displayed sense (no
+per-sense cap: kNN is O(n^2) in however many occurrences a word ends up with).
+``chance = 1/K`` (K senses) is the fully-mixed floor -- exact if senses are
+equinumerous, an approximation otherwise. Being local, purity is robust to a
+sense splitting into several clusters; sweeping ``k`` shows how far it reaches.
 
 Compute and plot are separate: purity is written to ``{word}_purity.csv`` and the
 heatmap grid is rendered from it, so re-running only re-plots (pass ``force`` to
@@ -29,21 +31,8 @@ from .embeddings import (
 
 log = logging.getLogger(__name__)
 
-MIN_SAMPLES = 20     # a sense needs at least this many occurrences to be scored
-
 
 # Purity computation
-
-def _balanced_idx(y: np.ndarray, k: int, max_per_sense: int, rng) -> np.ndarray:
-    """Up to ``max_per_sense`` indices per sense, so chance is a clean 1/K."""
-    out = []
-    for c in range(k):
-        ci = np.where(y == c)[0]
-        if len(ci) < MIN_SAMPLES:
-            continue
-        out.append(ci if len(ci) <= max_per_sense else rng.choice(ci, max_per_sense, replace=False))
-    return np.concatenate(out) if out else np.array([], dtype=int)
-
 
 MARGIN_M = 10        # neighbours per side for the robust margin (mean over m nearest)
 
@@ -75,24 +64,20 @@ def _purity(Zn: np.ndarray, yl: np.ndarray, ks: "list[int]"):
     return pur, margin
 
 
-def _purity_at(X, y, n_senses, max_per_sense, ks, rng):
-    idx = _balanced_idx(y, n_senses, max_per_sense, rng)
-    if len(idx) == 0:
-        return None
-    ys = y[idx]
-    present = np.unique(ys)
+def _purity_at(X, y, ks):
+    present = np.unique(y)
     if len(present) < 2:
         return None
     remap = {c: i for i, c in enumerate(present)}
-    yl = np.fromiter((remap[c] for c in ys), dtype=int, count=len(ys))
-    Z = X[idx].astype(np.float64)
+    yl = np.fromiter((remap[c] for c in y), dtype=int, count=len(y))
+    Z = X.astype(np.float64)
     Z /= np.linalg.norm(Z, axis=1, keepdims=True) + 1e-12
     return _purity(Z, yl, ks)
 
 
-def prep_word(records, word, pos, valid, min_per_sense, max_senses):
+def prep_word(records, word, pos, valid, min_per_sense):
     meta, pos = population(records, word, pos, valid)
-    senses = displayed_senses(meta, min_per_sense, max_senses)
+    senses = displayed_senses(meta, min_per_sense)
     if len(senses) < 2:
         return None
     meta = meta[meta["sense"].isin(senses)]          # drop occurrences of non-displayed senses
@@ -101,20 +86,19 @@ def prep_word(records, word, pos, valid, min_per_sense, max_senses):
     return dict(pos=pos, rows=meta["row"].to_numpy(), senses=senses, y=y)
 
 
-def _compute(npz_files, plans, ks, max_per_sense, cache_dir, seed):
+def _compute(npz_files, plans, ks, cache_dir):
     """Fill each plan's ``sweep`` in a single pass over the checkpoints."""
     steps = [int(p.stem.removeprefix("step")) for p in npz_files]
     layers = layers_of(npz_files[0])
     for plan in plans.values():
         plan["sweep"] = {k: np.full((len(layers), len(steps)), np.nan) for k in ks}
         plan["margins"] = {}                                   # (li, si) -> per-point margins
-    rng = np.random.default_rng(seed)
     for si, (npz, step) in enumerate(zip(npz_files, steps)):
         vectors = load_vectors(npz, cache_dir)
         for li in range(len(layers)):
             for plan in plans.values():
                 X = np.asarray(vectors[plan["rows"], li, :], np.float32)
-                res = _purity_at(X, plan["y"], len(plan["senses"]), max_per_sense, ks, rng)
+                res = _purity_at(X, plan["y"], ks)
                 if res is not None:
                     pur, margin = res
                     for k, pu in pur.items():
@@ -182,8 +166,7 @@ def _subdirs(out_dir):
     return sd
 
 
-def purity_corpus(records, emb_dir, words, pos, out_dir, *, max_per_sense: int,
-                  max_senses: int, knn_ks: "list[int]", min_per_sense: int,
+def purity_corpus(records, emb_dir, words, pos, out_dir, *, knn_ks: "list[int]", min_per_sense: int,
                   cache_dir=None, seed: int = 0, force: bool = False):
     """Purity for many words. Words whose ``data/{word}_purity.csv`` exists are
     reused (unless ``force``); the rest are computed in one checkpoint pass. Every
@@ -200,7 +183,7 @@ def purity_corpus(records, emb_dir, words, pos, out_dir, *, max_per_sense: int,
         plans = {}
         for word in todo:
             try:
-                plan = prep_word(records, word, pos, valid, min_per_sense, max_senses)
+                plan = prep_word(records, word, pos, valid, min_per_sense)
             except SystemExit as e:
                 log.warning("skip %s: %s", word, e)
                 continue
@@ -210,7 +193,7 @@ def purity_corpus(records, emb_dir, words, pos, out_dir, *, max_per_sense: int,
             plans[word] = plan
         log.info("Purity: computing %d word(s) (k sweep %s)", len(plans), ks)
         if plans:
-            steps, layers = _compute(npz_files, plans, ks, max_per_sense, cache_dir, seed)
+            steps, layers = _compute(npz_files, plans, ks, cache_dir)
             rng_sub = np.random.default_rng(seed)
             for word, plan in plans.items():
                 _write_csv(sd["data"] / f"{word}_purity.csv", steps, layers, ks,
@@ -248,7 +231,6 @@ def purity(cfg: dict, word: str, pos: str | None, only: "list[str] | None" = Non
     records = build_dataset(cfg, only)
     purity_corpus(
         records, emb_dir, [word], pos, store(cfg, m.get("out_dir", "purity")),
-        max_per_sense=m.get("max_per_sense", 1000), max_senses=m.get("max_senses", 12),
         knn_ks=m.get("knn_ks", [5, 10, 20, 50, 100, 200, 500, 1000, 2000]),
         min_per_sense=p["min_per_sense"], cache_dir=cache_dir, seed=m.get("seed", 0), force=force,
     )

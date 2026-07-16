@@ -83,6 +83,18 @@ def build_synsets(lemmas: "list[str]", keep_pos: "list[str] | None" = None) -> "
     return out
 
 
+def monosemous(lemmas: "list[str]") -> "list[str]":
+    """Lemmas with fewer than 2 non-proper WordNet senses across every content
+    POS. These can't support a sense contrast no matter which POS a run studies,
+    so they're checked against all POS regardless of any ``synsets_pos``
+    restriction the run itself applies."""
+    groups = build_synsets(lemmas, keep_pos=None)
+    counts: dict[str, int] = {}
+    for g in groups:
+        counts[g["lemma"]] = counts.get(g["lemma"], 0) + len(g["senses"])
+    return [l for l in lemmas if counts.get(l, 0) < 2]
+
+
 def load_or_build_synsets(cache: Path, lemmas_file: Path,
                           keep_pos: "list[str] | None" = None) -> "list[dict]":
     """Synsets from the cache file, built from the lemmas file on first use."""

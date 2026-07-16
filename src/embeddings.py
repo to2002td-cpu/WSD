@@ -59,10 +59,10 @@ def valid_mask(npz_files: list[Path], cache_dir: Path | None) -> np.ndarray:
     return valid
 
 
-def displayed_senses(meta: pd.DataFrame, min_per_sense: int, k: int) -> "list[str]":
-    """Senses to keep: >= min_per_sense occurrences, k best-attested."""
+def displayed_senses(meta: pd.DataFrame, min_per_sense: int) -> "list[str]":
+    """Senses to keep: >= min_per_sense occurrences."""
     counts = meta["sense"].value_counts()
-    return [s for s, c in counts.items() if c >= min_per_sense][:k]
+    return [s for s, c in counts.items() if c >= min_per_sense]
 
 
 def population(records, word, pos, valid) -> "tuple[pd.DataFrame, str]":

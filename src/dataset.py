@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-import random
 import re
-from collections import defaultdict
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -53,10 +51,10 @@ def _read_generated(gen_dir: Path, only: "list[str] | None" = None) -> "list[dic
 
 
 def assemble_records(cfg: dict, only: "list[str] | None" = None) -> "list[dict]":
-    """Clean the generated sentences into dataset records: drop invalid ones,
-    locate each target span, filter senses by count, and cap per sense. Pure — no
-    caching — so callers that publish a fresh corpus never touch the on-disk
-    extraction dataset (whose row order must stay aligned with the embeddings)."""
+    """Clean the generated sentences into dataset records: drop invalid ones and
+    locate each target span. Pure — no caching — so callers that publish a fresh
+    corpus never touch the on-disk extraction dataset (whose row order must stay
+    aligned with the embeddings)."""
     ds = cfg["dataset"]
     from .config import store
 
@@ -64,8 +62,7 @@ def assemble_records(cfg: dict, only: "list[str] | None" = None) -> "list[dict]"
     raw = _read_generated(gen_dir, only)
     log.info("Loaded %d generated sentences from %s", len(raw), gen_dir)
 
-    rng = random.Random(ds["seed"])
-    by_sense: dict[tuple, list[dict]] = defaultdict(list)
+    records: list[dict] = []
     n_invalid = n_nolocate = 0
     for i, gen in enumerate(raw):
         if ds["require_valid"] and gen.get("valid") is False:
@@ -82,7 +79,7 @@ def assemble_records(cfg: dict, only: "list[str] | None" = None) -> "list[dict]"
             n_nolocate += 1
             continue
         start, end, surface = loc
-        by_sense[(word, pos, sense)].append({
+        records.append({
             "word": word,
             "pos": pos,
             "sense": sense,
@@ -95,14 +92,6 @@ def assemble_records(cfg: dict, only: "list[str] | None" = None) -> "list[dict]"
             "model": gen.get("model"),
             "seed": gen.get("seed"),
         })
-
-    records: list[dict] = []
-    for _key, recs in sorted(by_sense.items()):
-        if len(recs) < ds["min_examples_per_sense"]:
-            continue
-        if len(recs) > ds["max_examples_per_sense"]:
-            recs = rng.sample(recs, ds["max_examples_per_sense"])
-        records.extend(recs)
 
     log.info("Kept %d instances across %d senses (dropped %d invalid, %d word-not-found)",
              len(records), len({(r["word"], r["pos"], r["sense"]) for r in records}),

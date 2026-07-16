@@ -23,7 +23,7 @@ import logging
 import numpy as np
 
 from .embeddings import layers_of, load_vectors, sorted_checkpoints, valid_mask
-from .purity import MIN_SAMPLES, prep_word
+from .purity import prep_word
 
 log = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ def _blocks(y: np.ndarray, n_senses: int, points_per_sense: int, rng) -> "tuple[
     idx, sizes = [], []
     for c in range(n_senses):
         ci = np.where(y == c)[0]
-        if len(ci) < MIN_SAMPLES:
+        if len(ci) == 0:
             continue
         take = ci if len(ci) <= points_per_sense else rng.choice(ci, points_per_sense, replace=False)
         idx.append(take)
@@ -126,13 +126,13 @@ def _grid(steps, layers, sizes, M, word, out_path):
 
 
 def visualize(records, emb_dir, word, pos, out_dir, *, cache_dir=None, min_per_sense=0,
-             max_senses=12, points_per_sense=40, seed=0) -> None:
+             points_per_sense=40, seed=0) -> None:
     """The sense x sense similarity grid for one word, given an already-loaded
     corpus. Shared by the single-word CLI and the corpus-wide driver so the
     dataset and per-checkpoint embeddings aren't reloaded per word."""
     npz_files = sorted_checkpoints(emb_dir)
     valid = valid_mask(npz_files, cache_dir)
-    plan = prep_word(records, word, pos, valid, min_per_sense, max_senses)
+    plan = prep_word(records, word, pos, valid, min_per_sense)
     if plan is None:
         raise SystemExit(f"'{word}' has <2 senses with >= {min_per_sense} occurrences.")
 
@@ -167,5 +167,4 @@ def similarity(cfg: dict, word: str, pos: str | None, only: "list[str] | None" =
 
     out_dir = store(cfg, m.get("out_dir", "purity")) / "similarity"
     visualize(records, emb_dir, word, pos, out_dir, cache_dir=cache_dir,
-             min_per_sense=p["min_per_sense"], max_senses=m.get("max_senses", 12),
-             points_per_sense=points_per_sense, seed=seed)
+             min_per_sense=p["min_per_sense"], points_per_sense=points_per_sense, seed=seed)

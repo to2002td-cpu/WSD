@@ -5,8 +5,9 @@ generate:
   prompt_file: prompts/generate.txt
   model: ilaas/gemma-4-31b       # live LiteLLM route; bare `gemma-4-31b` is often 503
   max_tokens: 2048
-  per_synset: 1000               # sentences per sense; balanced 1000 / 20 styles = 50 each
-  max_attempts: 200              # per (sense, style) request cap
-  workers: 32                    # concurrent requests; the proxy scales ~linearly to here
+  per_synset: 500                # sentences per sense; balanced 500 / 20 styles = 25 each
+  max_attempts: 200              # per (sense, style) completions cap (spans retry batches)
+  batch_n: 50                    # completions requested per API call (server cap is 64: n>64 -> 400)
+  workers: 4                     # concurrent batch requests; backend saturates past ~4 (503s, no gain)
   out_dir: generated
   seed: 0

@@ -9,7 +9,7 @@ storage_root: /home/tderrien/WSD/data
 
 lemmas_file: lemmas/nouns_top50.txt   # default study set (top-50 nouns by frequency)
 synsets_cache: synsets.json
-synsets_pos: [n]                       # restrict studied senses to nouns (null = all content POS)
+synsets_pos: null                       # restrict studied senses to nouns (null = all content POS)
 
 hub:                                   # generate pushes the corpus (parquet + jsonl) here
   repo_id: ""                          # e.g. your-org/wsd-sentences (or $HF_REPO_ID); token from $HF_TOKEN

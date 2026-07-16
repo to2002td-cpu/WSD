@@ -54,7 +54,6 @@ def main() -> None:
 
     purity_corpus(
         records, emb_dir, lemmas, args.pos, out,
-        max_per_sense=m["max_per_sense"], max_senses=m["max_senses"],
         knn_ks=m["knn_ks"], min_per_sense=p["min_per_sense"],
         cache_dir=cache_dir, seed=m["seed"], force=args.force,
     )

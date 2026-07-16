@@ -1,7 +1,15 @@
 """Stage 1 (CPU): synthesize sense-annotated sentences via the chat API.
 
-One sentence per request. Every WordNet (sense, style) pair is filled to
-``per_synset // n_styles`` valid, self-checked sentences, so styles are balanced.
+Up to ``batch_n`` sentences per request: the backend (vLLM behind a LiteLLM
+proxy) serves the OpenAI ``n`` parameter as one batch of independent stochastic
+completions, which is far cheaper than one request per sentence (measured:
+~16 rows/s at concurrency=4, batch_n=50 vs. ~3.2 rows/s at 32 sequential
+one-sentence requests -- past concurrency=4 the backend itself is the ceiling,
+more concurrent requests just fail with 503/RetryError instead of adding
+throughput). Every WordNet (sense, style) pair is filled to ``per_synset //
+n_styles`` valid, self-checked sentences, so styles are balanced; any sentence a
+batch comes back missing (invalid, malformed, or a failed request) leaves the
+pair short, topped up by a later smaller batch until ``max_attempts`` is spent.
 All pairs across all lemmas share a single work queue: workers stay busy on
 whatever still needs sentences instead of draining one lemma at a time. Output is
 one resumable JSONL per lemma at ``<out_dir>/<lemma>.<pos>.jsonl``; re-running
@@ -26,9 +34,26 @@ from tqdm import tqdm
 from urllib3.util.retry import Retry
 
 from .config import resolve, store
-from .synsets import load_or_build_synsets
+from .synsets import load_or_build_synsets, monosemous, read_lemmas
 
 log = logging.getLogger(__name__)
+
+# Sustained rows/sec measured 2026-07-16 at concurrency=4, batch_n=50
+# (ilaas/gemma-4-31b) -- a rough throughput estimate for that operating point,
+# not a guarantee, and NOT linear in concurrency (see module docstring: this
+# backend's ceiling is around concurrency=4, not something a bigger --workers
+# buys you more of).
+EMPIRICAL_ROWS_PER_SEC = 16.27
+
+
+def _format_duration(seconds: float) -> str:
+    h, rem = divmod(int(seconds), 3600)
+    m, _s = divmod(rem, 60)
+    if h:
+        return f"{h}h{m:02d}m"
+    if m:
+        return f"{m}m"
+    return "<1m"
 
 
 def build_prompt(template: str, word: str, sense: dict, style: str) -> str:
@@ -99,35 +124,45 @@ class Client:
         self.session.mount("https://", adapter)
         self.session.mount("http://", adapter)
 
-    def complete(self, prompt: str, seed: int) -> "str | None":
+    def complete(self, prompt: str, seed: int, n: int = 1) -> "list[str]":
+        """Up to ``n`` independent completions of ``prompt`` from a single
+        request. Empty on any failure (network error, non-2xx, malformed
+        body) -- callers retry the whole batch, since the backend rejects
+        ``n`` outright rather than returning a partial batch."""
         payload = {"model": self.model, "messages": [{"role": "user", "content": prompt}],
-                   "stream": False, "max_tokens": self.max_tokens, "seed": seed}
+                   "stream": False, "max_tokens": self.max_tokens, "seed": seed, "n": n}
         try:
-            resp = self.session.post(self.url, json=payload, timeout=120)
+            resp = self.session.post(self.url, json=payload, timeout=180)
         except requests.RequestException as exc:
             log.debug("request error: %s", exc)
-            return None
+            return []
         if not resp.ok:
             log.debug("HTTP %s: %s", resp.status_code, resp.text[:200])
-            return None
+            return []
         try:
-            return resp.json()["choices"][0]["message"]["content"].strip()
+            return [c["message"]["content"].strip() for c in resp.json()["choices"]]
         except (ValueError, KeyError, IndexError, TypeError):
             log.debug("unexpected response: %s", resp.text[:200])
-            return None
+            return []
 
 
-def _make_record(client, template, lemma, sense, style, seed) -> "dict | None":
-    text = client.complete(build_prompt(template, lemma, sense, style), seed)
-    if not text:
-        return None
-    parsed = parse_result(text)
-    if not parsed or not parsed["valid"]:
-        return None
-    return {"word": lemma, "sense_id": sense["id"], "sense_definition": sense["definition"],
-            "style": style, "model": client.model, "seed": seed, "valid": True,
-            "sentence": parsed["sentence"], "reasoning": parsed["reasoning"],
-            "created_at": datetime.now(timezone.utc).isoformat()}
+def _make_records(client, template, lemma, sense, style, seed, n) -> "list[dict]":
+    """The valid, self-checked records from one batch of up to ``n`` completions
+    (fewer if some choices were invalid, empty, or the whole request failed)."""
+    texts = client.complete(build_prompt(template, lemma, sense, style), seed, n)
+    now = datetime.now(timezone.utc).isoformat()
+    records = []
+    for i, text in enumerate(texts):
+        if not text:
+            continue
+        parsed = parse_result(text)
+        if not parsed or not parsed["valid"]:
+            continue
+        records.append({"word": lemma, "sense_id": sense["id"], "sense_definition": sense["definition"],
+                        "style": style, "model": client.model, "seed": seed, "choice_index": i,
+                        "valid": True, "sentence": parsed["sentence"], "reasoning": parsed["reasoning"],
+                        "created_at": now})
+    return records
 
 
 def _counts(path: Path) -> "dict[tuple[str, str], int]":
@@ -200,9 +235,15 @@ def _build_pairs(synsets, styles, per_style, out_dir, seed, max_attempts):
     return pairs, writers
 
 
-def _run_queue(pairs, client, template, workers, progress) -> None:
+def _run_queue(pairs, client, template, workers, batch_n, progress) -> None:
     """Drive all pairs concurrently through a shy sliding window of at most
-    ``workers`` in-flight requests, round-robin so every pair makes progress."""
+    ``workers`` in-flight batch requests, round-robin so every pair makes
+    progress. Each in-flight request asks for exactly as many completions as
+    the pair still needs (capped at ``batch_n``), so at most one batch is ever
+    in flight per pair; any request that comes back short (invalid choices, or
+    the whole request failing) leaves the pair short, picked up again by
+    ``fill()`` with a smaller batch until ``target`` is met or ``max_attempts``
+    is spent."""
     ready = deque(pairs)
     inflight: dict = {}
 
@@ -213,23 +254,26 @@ def _run_queue(pairs, client, template, workers, progress) -> None:
                 pair = ready[0]
                 if not pair.needs_work():
                     ready.popleft(); rounds = 0; continue
-                if pair.got + pair.pending >= pair.target:        # enough already in flight
+                remaining = pair.target - pair.got - pair.pending
+                if remaining <= 0:                        # enough already in flight
                     ready.rotate(-1); rounds += 1; continue
-                pair.attempts += 1
-                pair.pending += 1
-                fut = pool.submit(_make_record, client, template, pair.lemma,
-                                  pair.sense, pair.style, pair.next_seed())
-                inflight[fut] = pair
+                n = min(batch_n, remaining, pair.max_attempts - pair.attempts)
+                pair.attempts += n
+                pair.pending += n
+                fut = pool.submit(_make_records, client, template, pair.lemma,
+                                  pair.sense, pair.style, pair.next_seed(), n)
+                inflight[fut] = (pair, n)
                 ready.rotate(-1); rounds = 0
 
         fill()
         while inflight:
             done, _ = wait(inflight, return_when=FIRST_COMPLETED)
             for fut in done:
-                pair = inflight.pop(fut)
-                pair.pending -= 1
-                rec = fut.result()
-                if rec is not None and pair.got < pair.target:
+                pair, n = inflight.pop(fut)
+                pair.pending -= n
+                for rec in fut.result():
+                    if pair.got >= pair.target:
+                        break
                     pair.writer.write(rec)
                     pair.got += 1
                     progress.update(1)
@@ -238,8 +282,19 @@ def _run_queue(pairs, client, template, workers, progress) -> None:
 
 def generate(cfg: dict) -> None:
     gen = cfg["generate"]
+    lemmas = read_lemmas(resolve(cfg["lemmas_file"]))
     synsets = load_or_build_synsets(store(cfg, cfg["synsets_cache"]),
                                     resolve(cfg["lemmas_file"]), cfg.get("synsets_pos"))
+    n_senses = sum(len(g["senses"]) for g in synsets)
+    log.info("%d lemmas -> %d (lemma, pos) group(s), %d sense(s) in scope",
+             len(lemmas), len(synsets), n_senses)
+
+    mono = monosemous(lemmas)
+    if mono:
+        log.warning("%d lemma(s) have <2 WordNet senses across ALL POS (no sense "
+                    "contrast possible, will be skipped downstream): %s",
+                    len(mono), ", ".join(mono))
+
     styles = json.loads(resolve(gen["styles_file"]).read_text())
     template = resolve(gen["prompt_file"]).read_text()
     client = Client(gen)
@@ -253,11 +308,13 @@ def generate(cfg: dict) -> None:
     pairs, writers = _build_pairs(synsets, styles, per_style, out_dir,
                                   gen.get("seed", 0), gen["max_attempts"])
     total = sum(p.target for p in pairs)
-    log.info("Generating %d sentences over %d (sense, style) pairs, %d workers",
-             total, len(pairs), gen["workers"])
+    batch_n = gen.get("batch_n", 50)
+    eta = total / EMPIRICAL_ROWS_PER_SEC
+    log.info("Generating %d sentence(s) over %d (sense, style) pair(s), %d workers x "
+             "batch_n=%d -- est. %s", total, len(pairs), gen["workers"], batch_n, _format_duration(eta))
     try:
         with tqdm(total=total, desc="Sentences", unit="sent") as progress:
-            _run_queue(pairs, client, template, gen["workers"], progress)
+            _run_queue(pairs, client, template, gen["workers"], batch_n, progress)
     finally:
         for writer in writers:
             writer.close()
