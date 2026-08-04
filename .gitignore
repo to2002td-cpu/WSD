@@ -6,6 +6,9 @@ __pycache__/
 # All runtime data & outputs (generated corpus, embeddings, figures, purity CSVs,
 # secrets). Real outputs live under storage_root ($WSD_STORAGE_ROOT); the local
 # data/ mirror is never committed.
+*.jsonl
+*.npy
+*.npz
 /data/
 /figures/
 
