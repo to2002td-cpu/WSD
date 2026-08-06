@@ -1,0 +1,18 @@
+# Generation run for the exposure study.
+#
+# The lemmas in lemmas/exposure_lemmas.txt were chosen to span four orders of
+# magnitude of corpus frequency, measured exactly on the tokenised corpus Pythia
+# was trained on. The point is to compare senses of words the model met tens of
+# thousands of times against senses of words it met hundreds of millions of times,
+# and see whether separation depends on how much a word was seen at all.
+#
+# storage_root is deliberately not set here, so the run writes wherever the person
+# launching it normally writes.
+include:
+  - default.yaml
+
+lemmas_file: lemmas/exposure_lemmas.txt
+
+generate:
+  per_synset: 300          # 15 per style over 20 styles; the geometry needs 200
+  out_dir: generated_exposure
